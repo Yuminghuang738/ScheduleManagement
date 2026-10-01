@@ -1,141 +1,451 @@
 <script setup lang="ts">
 /**
- * 分类信息面板（最小可运行版）
+ * 分类信息面板 ClassifiedPanel
  *
- * 现在能做的：
- *   - 输入内容 → 保存 → 自动分类（调 saveClassifiedInfo）
- *   - 列出已分类信息（调 queryClassifiedItems）
+ * 职责：收纳「时间轴之外」的零散信息 —— 用户随手输入一段文字，
+ * 由主进程自动归类（日程 / 参考 / 联系人 / 备注），并支持搜索、筛选、分页浏览。
  *
- * 后续 P4 在此基础上加：分类筛选、分页等。
+ * 数据通路：组件 → useAppApi → window.appApi → IPC → 主进程
+ * 约束：不 import src/electron/**，不使用 process / require，一律走 useAppApi。
  */
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useAppApi } from '../hooks/useAppApi';
-import type { ClassifiedItem } from '../../shared/types';
+import type {
+  ClassifiedItem,
+  ClassifiedQueryRes,
+  ClassifiedType,
+  QueryClassifiedReq,
+} from '../../shared/types';
+
+defineOptions({ name: 'ClassifiedPanel' });
 
 const api = useAppApi();
 
-const input = ref('');
+// ==================== 类型元信息 ====================
+
+/** 四类信息的展示名 + 主题色（配色为需求约定值，勿随意更改） */
+const TYPE_META: Record<ClassifiedType, { label: string; color: string }> = {
+  schedule: { label: '日程', color: '#4f8cff' },
+  reference: { label: '参考', color: '#10b981' },
+  contact: { label: '联系人', color: '#8b5cf6' },
+  note: { label: '备注', color: '#f39c12' },
+};
+
+/** 后端返回未知类型时的兜底样式，避免界面炸掉 */
+const TYPE_FALLBACK = { label: '未分类', color: '#909399' };
+
+/** Tab 值：'' 表示「全部」，此时不向接口传 type */
+type TabValue = '' | ClassifiedType;
+
+const TABS: ReadonlyArray<{ label: string; value: TabValue }> = [
+  { label: '全部', value: '' },
+  { label: '日程', value: 'schedule' },
+  { label: '参考', value: 'reference' },
+  { label: '联系人', value: 'contact' },
+  { label: '备注', value: 'note' },
+];
+
+function metaOf(type: ClassifiedType | undefined) {
+  return (type && TYPE_META[type]) || TYPE_FALLBACK;
+}
+
+/** 类型标签的内联配色：纯色文字 + 10% 底色 + 30% 描边 */
+function tagStyle(type: ClassifiedType | undefined) {
+  const c = metaOf(type).color;
+  return { color: c, backgroundColor: `${c}1a`, borderColor: `${c}4d` };
+}
+
+// ==================== 状态 ====================
+
+// ---- 输入区 ----
+const inputText = ref('');
+const saving = ref(false);
+
+// ---- 查询条件 ----
+const activeType = ref<TabValue>('');
+const keyword = ref('');
+
+// ---- 列表与分页 ----
 const items = ref<ClassifiedItem[]>([]);
 const loading = ref(false);
+const page = ref(1);
+const pageSize = ref(10);
+const total = ref(0);
 
-const typeText: Record<string, string> = {
-  schedule: '日程',
-  reference: '参考',
-  contact: '联系人',
-  note: '笔记',
-};
+/** 是否处于筛选/搜索状态 —— 用于区分「暂无记录」与「无匹配结果」 */
+const hasFilter = computed(() => !!activeType.value || !!keyword.value.trim());
 
-const typeColor: Record<string, string> = {
-  schedule: '#409eff',
-  reference: '#e6a23c',
-  contact: '#67c23a',
-  note: '#909399',
-};
+// ==================== 查询 ====================
 
-async function load() {
+/** 按当前筛选条件拼装请求；空条件不下发，保持请求干净 */
+function buildReq(): QueryClassifiedReq {
+  const req: QueryClassifiedReq = { page: page.value, pageSize: pageSize.value };
+  if (activeType.value) req.type = activeType.value;
+  const kw = keyword.value.trim();
+  if (kw) req.keyword = kw;
+  return req;
+}
+
+/**
+ * 兼容层：契约规定 items 为「当前页切片」，但现网 mock 数据源未实现分页
+ * （src/shared/mock.ts 的 queryClassifiedItems 直接返回全量 items）。
+ * 这里做一次防御性归一化：返回条数超出 pageSize 即判定后端未切片，改由渲染层按页切分，
+ * 使用户在两种后端下都能正常翻页。后端修复切片后，此分支不再触发，行为不变。
+ */
+function toPageItems(res: ClassifiedQueryRes | undefined, reqPage: number): ClassifiedItem[] {
+  const raw = res?.items ?? [];
+  if (raw.length <= pageSize.value) return raw;
+  const start = (reqPage - 1) * pageSize.value;
+  return raw.slice(start, start + pageSize.value);
+}
+
+async function loadItems(): Promise<void> {
   loading.value = true;
   try {
-    const res = await api.queryClassifiedItems({});
-    items.value = res.items;
+    let res: ClassifiedQueryRes = await api.queryClassifiedItems(buildReq());
+    const totalCount = res?.pageInfo?.total ?? (res?.items?.length ?? 0);
+
+    // 防御性越界保护：若当前页已超出总量范围（例如数据被其他视图删减、
+    // 或后端分页口径变化），退回有效范围内的最后一页重取一次，
+    // 避免出现「有总数却空白」的假空态。常规交互都会先重置到第 1 页，此处兜底。
+    if (toPageItems(res, page.value).length === 0 && page.value > 1 && totalCount > 0) {
+      const lastPage = Math.max(1, Math.ceil(totalCount / pageSize.value));
+      if (lastPage < page.value) {
+        page.value = lastPage;
+        res = await api.queryClassifiedItems(buildReq());
+      }
+    }
+
+    items.value = toPageItems(res, page.value);
+    total.value = res?.pageInfo?.total ?? items.value.length;
+    if (res?.pageInfo?.page) page.value = res.pageInfo.page;
+  } catch {
+    // useAppApi 已经弹过错误提示，这里只负责把界面落回空态
+    items.value = [];
+    total.value = 0;
   } finally {
     loading.value = false;
   }
 }
 
-async function save() {
-  const content = input.value.trim();
+// ==================== 保存 ====================
+
+async function handleSave(): Promise<void> {
+  const content = inputText.value.trim();
   if (!content) {
-    ElMessage.warning('先输入点内容');
+    ElMessage.warning('请先输入要保存的内容');
     return;
   }
-  const res = await api.saveClassifiedInfo({ content });
-  ElMessage.success(`已归类为：${typeText[res.type]}`);
-  input.value = '';
-  await load();
+
+  saving.value = true;
+  try {
+    const item = await api.saveClassifiedInfo({ content });
+    // 展示后端实际判定的类型（而非前端猜测），便于用户发现归类偏差
+    ElMessage.success(`已归类为：${item?.type ?? '未知'}`);
+    inputText.value = '';
+    // 回到「全部」+ 第一页，确保刚保存的条目一定能被看到
+    activeType.value = '';
+    page.value = 1;
+    await loadItems();
+  } catch {
+    // useAppApi 已经弹过错误提示
+  } finally {
+    saving.value = false;
+  }
 }
 
-onMounted(load);
+// ==================== 交互 ====================
+
+function handleTabChange(): void {
+  page.value = 1;
+  void loadItems();
+}
+
+function handleSearch(): void {
+  page.value = 1;
+  void loadItems();
+}
+
+function handlePageChange(next: number): void {
+  page.value = next;
+  void loadItems();
+}
+
+// ==================== 展示辅助 ====================
+
+/** content 预览：前 50 字，超出加省略号 */
+function preview(text: string | undefined): string {
+  const s = text ?? '';
+  return s.length > 50 ? `${s.slice(0, 50)}…` : s;
+}
+
+/** ISO8601 → 本地可读时间（YYYY-MM-DD HH:mm） */
+function formatTime(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+onMounted(() => {
+  void loadItems();
+});
 </script>
 
 <template>
-  <div class="classified-panel">
-    <h3 class="panel-title">信息收纳</h3>
+  <section class="classified-panel">
+    <header class="panel-header">
+      <h2 class="panel-title">零散信息</h2>
+      <p class="panel-subtitle">随手记一段，系统自动归类</p>
+    </header>
 
-    <div class="input-row">
+    <!-- ==================== 输入区 ==================== -->
+    <div class="save-block">
       <el-input
-        v-model="input"
+        v-model="inputText"
         type="textarea"
         :rows="3"
-        placeholder="粘贴一段零散信息，自动分类保存"
+        resize="none"
+        maxlength="500"
+        show-word-limit
+        placeholder="粘贴或输入任意内容，例如：王经理电话 138xxxx，产品部负责人"
+        @keydown.ctrl.enter.prevent="handleSave"
       />
-      <el-button type="primary" style="margin-top: 8px" @click="save">
-        保存
-      </el-button>
+      <div class="save-actions">
+        <span class="hint">Ctrl + Enter 快速保存</span>
+        <el-button type="primary" :loading="saving" @click="handleSave">
+          保存
+        </el-button>
+      </div>
     </div>
 
-    <div class="item-list" v-loading="loading">
-      <div v-for="item in items" :key="item.title + item.createdAt" class="item">
-        <span class="item-type" :style="{ color: typeColor[item.type] }">
-          {{ typeText[item.type] }}
-        </span>
-        <span class="item-title">{{ item.title }}</span>
-        <p class="item-content">{{ item.content }}</p>
-      </div>
+    <!-- ==================== 分类 Tab ==================== -->
+    <el-tabs v-model="activeType" class="type-tabs" @tab-change="handleTabChange">
+      <el-tab-pane
+        v-for="tab in TABS"
+        :key="tab.value || 'all'"
+        :label="tab.label"
+        :name="tab.value"
+      />
+    </el-tabs>
 
+    <!-- ==================== 搜索栏 ==================== -->
+    <div class="search-block">
+      <el-input
+        v-model="keyword"
+        clearable
+        placeholder="搜索标题或内容关键词"
+        @keyup.enter="handleSearch"
+        @clear="handleSearch"
+      />
+      <el-button :loading="loading" @click="handleSearch">搜索</el-button>
+    </div>
+
+    <!-- ==================== 列表 ==================== -->
+    <div v-loading="loading" class="list-block">
       <el-empty
         v-if="!loading && items.length === 0"
-        description="还没有分类信息"
-        :image-size="60"
+        :description="hasFilter ? '没有匹配的记录，换个关键词试试' : '还没有记录，输入点内容保存试试'"
+        :image-size="80"
       />
+
+      <ul v-else class="item-list">
+        <li v-for="(item, idx) in items" :key="`${item.createdAt}-${idx}`" class="item">
+          <div class="item-head">
+            <span class="type-tag" :style="tagStyle(item.type)">
+              {{ metaOf(item.type).label }}
+            </span>
+            <span class="item-title" :title="item.title">{{ item.title }}</span>
+            <span class="item-time">{{ formatTime(item.createdAt) }}</span>
+          </div>
+
+          <p class="item-content">{{ preview(item.content) }}</p>
+
+          <div v-if="item.tags?.length" class="item-tags">
+            <el-tag
+              v-for="tag in item.tags"
+              :key="tag"
+              size="small"
+              type="info"
+              effect="plain"
+            >
+              {{ tag }}
+            </el-tag>
+          </div>
+        </li>
+      </ul>
     </div>
-  </div>
+
+    <!-- ==================== 分页 ==================== -->
+    <footer v-if="total > 0" class="panel-footer">
+      <span class="total">共 {{ total }} 条</span>
+      <el-pagination
+        background
+        layout="prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+        :current-page="page"
+        @current-change="handlePageChange"
+      />
+    </footer>
+  </section>
 </template>
 
 <style scoped>
 .classified-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  height: 100%;
   padding: 16px;
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-radius: 10px;
+}
+
+/* ---------- 头部 ---------- */
+.panel-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f2f5;
 }
 
 .panel-title {
-  font-size: 15px;
+  margin: 0;
+  font-size: 16px;
   font-weight: 600;
-  color: #303133;
-  margin: 0 0 12px;
+  color: #1f2329;
 }
 
-.input-row {
-  margin-bottom: 16px;
+.panel-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #8a919f;
+}
+
+/* ---------- 输入区 ---------- */
+.save-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.save-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hint {
+  font-size: 12px;
+  color: #b0b6c0;
+}
+
+/* ---------- Tab ---------- */
+.type-tabs :deep(.el-tabs__header) {
+  margin-bottom: 8px;
+}
+
+.type-tabs :deep(.el-tabs__item) {
+  font-size: 13px;
+}
+
+/* ---------- 搜索 ---------- */
+.search-block {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 列表 ---------- */
+.list-block {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
 }
 
 .item-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .item {
   padding: 10px 12px;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  background: #fafafa;
+  background: #fafbfc;
+  border: 1px solid #eef0f3;
+  border-radius: 8px;
+  transition: background-color 0.15s, border-color 0.15s;
 }
 
-.item-type {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 8px;
+.item:hover {
+  background: #f5f7fa;
+  border-color: #dbe1e8;
+}
+
+.item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.type-tag {
+  flex: none;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  border: 1px solid transparent;
+  border-radius: 4px;
 }
 
 .item-title {
-  font-size: 14px;
-  color: #303133;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.item-time {
+  flex: none;
+  font-size: 11px;
+  color: #a0a6b0;
 }
 
 .item-content {
+  margin: 6px 0 0;
   font-size: 12px;
-  color: #909399;
-  margin: 4px 0 0;
+  line-height: 1.6;
+  color: #5c6270;
+  word-break: break-word;
+}
+
+.item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* ---------- 分页 ---------- */
+.panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.total {
+  font-size: 12px;
+  color: #8a919f;
 }
 </style>
