@@ -1,0 +1,10 @@
+appId: com.chronoflow.app
+productName: ChronoFlow
+directories:
+  output: dist
+win:
+  target: nsis
+  icon: resources/icon.ico
+linux:
+  target: AppImage
+  icon: resources/icon.png
