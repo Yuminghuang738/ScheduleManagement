@@ -48,11 +48,16 @@ export function highlightColor(type: HighlightType): string {
 
 // ==================== 分类信息类型 ====================
 
+/**
+ * 文案与配色取自 Task 5 契约（ClassifiedPanel）：
+ *   「日程 / 参考 / 联系人 / 备注」+ schedule #4f8cff、reference #10b981、
+ *   contact #8b5cf6、note #f39c12 —— 这四个色值是需求约定值，不要改成"更好看"的近似色。
+ */
 export const CLASSIFIED_TYPE_META: Record<ClassifiedType, { label: string; color: string }> = {
   schedule: { label: '日程', color: '#4f8cff' },
-  reference: { label: '参考资料', color: '#37b26c' },
-  contact: { label: '联系人', color: '#e6a23c' },
-  note: { label: '笔记', color: '#8c98a8' },
+  reference: { label: '参考', color: '#10b981' },
+  contact: { label: '联系人', color: '#8b5cf6' },
+  note: { label: '备注', color: '#f39c12' },
 };
 
 export const CLASSIFIED_TYPE_OPTIONS = (
