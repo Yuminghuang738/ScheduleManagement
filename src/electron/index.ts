@@ -32,7 +32,7 @@ function createWindow(): void {
     height: 800,
     title: 'ChronoFlow',
     webPreferences: {
-      preload: join(__dirname, '../preload/preload.mjs'),
+      preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

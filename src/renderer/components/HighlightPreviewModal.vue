@@ -1,21 +1,17 @@
 <script setup lang="ts">
 /**
- * 划重点预览弹窗
+ * 划重点预览弹窗（骨架占位）
  *
- * 需求：
- *   - 高亮显示原文片段（HighlightSegment）
- *   - 显示每条片段类型 + confidence
- *   - 一键把 draftSchedules 转入日程表
- *
- * 骨架说明：空壳，P3 把实现填进来。
+ * 后续 P3 实现：高亮原文片段 + 一键导入 draftSchedules。
+ * 当前默认不显示，不影响整体运行。
  */
+import { ref } from 'vue';
 
-// ==================== 本模块由 P3 实现 ====================
-// TODO: P3 替换此文件全部内容
+const visible = ref(false);
 </script>
 
 <template>
-  <div class="highlight-preview">
-    <p>HighlightPreviewModal —— 待 P3 实现</p>
-  </div>
+  <el-dialog v-model="visible" title="划重点预览" width="600px">
+    <p style="color: #909399">划重点预览 —— 待 P3 实现</p>
+  </el-dialog>
 </template>

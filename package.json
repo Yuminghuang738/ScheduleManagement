@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "智能日程管理桌面应用 — 把零散的日程信息变成一张自动整理好的智能日程表",
   "main": "./out/main/index.js",
-  "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
     "dev:mobile": "vite --config vite.mobile.config.ts",

@@ -9,7 +9,7 @@ export default defineConfig({
       outDir: 'out/main',
       lib: {
         entry: resolve(__dirname, 'src/electron/index.ts'),
-        formats: ['es']
+        formats: ['cjs']
       }
     }
   },
@@ -19,7 +19,7 @@ export default defineConfig({
       outDir: 'out/preload',
       lib: {
         entry: resolve(__dirname, 'src/electron/preload.ts'),
-        formats: ['es']
+        formats: ['cjs']
       }
     }
   },
