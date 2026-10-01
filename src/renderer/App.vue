@@ -37,6 +37,10 @@ function onImported() {
   scheduleRef.value?.load();
 }
 
+// 模板里直接用 __MOCK_MODE__ 会被 Vue 编译成 _ctx 属性访问导致 define 注入失效，
+// 在 script 中取值后作为普通绑定传给模板
+const isMock = __MOCK_MODE__;
+
 const dateText = computed(() => {
   const d = now.value;
   return `${d.getMonth() + 1}月${d.getDate()}日 ${WEEK[d.getDay()]} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -65,7 +69,7 @@ onUnmounted(() => clearInterval(timer));
 
       <div class="header-right">
         <span class="clock">{{ dateText }}</span>
-        <span v-if="__MOCK_MODE__" class="mock-chip" title="由 MOCK_MODE 控制，设为 false 接入真实逻辑">
+        <span v-if="isMock" class="mock-chip" title="由 MOCK_MODE 控制，设为 false 接入真实逻辑">
           <i />Mock 数据
         </span>
       </div>

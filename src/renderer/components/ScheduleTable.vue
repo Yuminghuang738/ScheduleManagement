@@ -129,7 +129,9 @@ async function load() {
   loading.value = true;
   try {
     const res = await api.query({});
-    schedules.value = res.items;
+    // 浅拷贝：mock 的 query 每次返回同一数组引用，
+    // 直接赋值会因 Object.is 相等被 Vue 跳过更新，导致列表不刷新
+    schedules.value = [...res.items];
   } catch {
     // 错误提示已在 useAppApi 统一弹出
   } finally {

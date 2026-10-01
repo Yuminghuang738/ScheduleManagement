@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * 划重点预览弹窗（Task 4，此处实现最小可用版本以打通 Task 3 链路）
+ * 划重点预览弹窗（Task 4）
  *
  * Props：visible / highlights / draftSchedules / fullText
  * Emits：close / imported
- * - 左栏：原文全文，按 highlight 的 startOffset~endOffset 高亮
- * - 右栏：每条 highlight → 类型标签 + 文本 + 置信度
- * - 底部「全部导入日程表」：逐条 create → emit('imported') → emit('close')
+ *
+ * - 左栏(60%)：原文全文，按 highlight 的 startOffset~endOffset 高亮（六类配色）
+ * - 右栏(40%)：每条 highlight → 类型标签 + 文本 + 置信度(ElProgress) + suggestion
+ * - 底部「全部导入日程表」：逐条 create → ElMessage.success → emit('imported') → emit('close')
  */
 import { ref, computed } from 'vue';
 import { ElMessage } from 'element-plus';
@@ -28,7 +29,7 @@ const emit = defineEmits<{
 const api = useAppApi();
 const importing = ref(false);
 
-/* ---------- 类型标签映射 ---------- */
+/* ---------- 类型标签 / 高亮配色（Task4 规范，六类） ---------- */
 const TYPE_TEXT: Record<HighlightType, string> = {
   task: '任务',
   deadline: '截止',
@@ -46,25 +47,44 @@ const TYPE_COLOR: Record<HighlightType, string> = {
   reminder: '#fef9c3',
 };
 
-/* ---------- 把全文按 highlight 切成片段，命中的高亮 ---------- */
+/* ---------- 把全文切成高亮片段（事件端点扫描，天然支持重叠） ---------- */
 interface Seg {
   text: string;
   type: HighlightType | null;
 }
+
 const segments = computed<Seg[]>(() => {
   const text = props.fullText || '';
-  const sorted = [...props.highlights].sort((a, b) => a.startOffset - b.startOffset);
-  const out: Seg[] = [];
-  let cursor = 0;
-  for (const h of sorted) {
-    if (h.startOffset > cursor) out.push({ text: text.slice(cursor, h.startOffset), type: null });
-    out.push({ text: text.slice(h.startOffset, h.endOffset), type: h.type });
-    cursor = Math.max(cursor, h.endOffset);
+  const n = text.length;
+  if (!n) return [];
+
+  // 构建每个字符位置上的「当前高亮类型」标记（重叠时取最后命中的）
+  const typeAt: (HighlightType | null)[] = new Array(n).fill(null);
+  for (const h of props.highlights) {
+    const s = Math.max(0, Math.min(h.startOffset, n));
+    const e = Math.max(0, Math.min(h.endOffset, n));
+    for (let i = s; i < e; i++) typeAt[i] = h.type;
   }
-  if (cursor < text.length) out.push({ text: text.slice(cursor), type: null });
+
+  // 相邻同类型字符合并成一个片段
+  const out: Seg[] = [];
+  let i = 0;
+  while (i < n) {
+    const t = typeAt[i];
+    let j = i + 1;
+    while (j < n && typeAt[j] === t) j++;
+    out.push({ text: text.slice(i, j), type: t });
+    i = j;
+  }
   return out;
 });
 
+/* ---------- 置信度百分比 ---------- */
+function pct(h: HighlightSegment): number {
+  return Math.round((h.confidence || 0) * 100);
+}
+
+/* ---------- 一键导入 ---------- */
 async function importAll() {
   if (!props.draftSchedules.length) {
     ElMessage.warning('没有可导入的日程');
@@ -102,34 +122,41 @@ async function importAll() {
     :model-value="visible"
     title="划重点预览"
     width="80%"
-    @update:model-value="v => !v && emit('close')"
+    :close-on-click-modal="false"
+    @update:model-value="v => !v && !importing && emit('close')"
   >
     <div class="hp">
       <div class="hp-left">
         <div class="hp-block-title">原文</div>
-        <p class="hp-text">
+        <p v-if="fullText" class="hp-text">
           <span
             v-for="(seg, i) in segments"
             :key="i"
+            :class="{ hl: seg.type }"
             :style="seg.type ? { background: TYPE_COLOR[seg.type] } : {}"
           >{{ seg.text }}</span>
         </p>
+        <p v-else class="hp-empty-text">暂无原文内容</p>
       </div>
 
       <div class="hp-right">
         <div class="hp-block-title">识别到的重点（{{ highlights.length }}）</div>
         <div class="hp-list">
           <div v-for="(h, i) in highlights" :key="i" class="hp-item">
-            <span class="hp-type" :style="{ background: TYPE_COLOR[h.type] }">
-              {{ TYPE_TEXT[h.type] ?? h.type }}
-            </span>
+            <div class="hp-item-head">
+              <span class="hp-type" :style="{ background: TYPE_COLOR[h.type] }">
+                {{ TYPE_TEXT[h.type] ?? h.type }}
+              </span>
+              <span class="hp-conf">{{ pct(h) }}%</span>
+            </div>
             <span class="hp-item-text">{{ h.text }}</span>
             <el-progress
-              :percentage="Math.round(h.confidence * 100)"
+              :percentage="pct(h)"
               :stroke-width="4"
               :show-text="false"
+              :color="h.confidence >= 0.7 ? '#0d9488' : '#f59e0b'"
             />
-            <span v-if="h.suggestion" class="hp-sugg">{{ h.suggestion }}</span>
+            <span v-if="h.suggestion" class="hp-sugg">💡 {{ h.suggestion }}</span>
           </div>
           <div v-if="!highlights.length" class="hp-empty">没有识别到重点，换个文本试试</div>
         </div>
@@ -137,7 +164,7 @@ async function importAll() {
     </div>
 
     <template #footer>
-      <el-button @click="emit('close')">取消</el-button>
+      <el-button :disabled="importing" @click="emit('close')">取消</el-button>
       <el-button type="primary" :loading="importing" @click="importAll">
         全部导入日程表（{{ draftSchedules.length }}）
       </el-button>
@@ -152,11 +179,11 @@ async function importAll() {
   min-height: 320px;
 }
 .hp-left {
-  flex: 6;
+  flex: 6; /* 60% */
   min-width: 0;
 }
 .hp-right {
-  flex: 4;
+  flex: 4; /* 40% */
   min-width: 0;
   border-left: 1px solid var(--cf-line);
   padding-left: 18px;
@@ -173,35 +200,52 @@ async function importAll() {
   line-height: 1.9;
   color: var(--cf-text);
   white-space: pre-wrap;
+  word-break: break-word;
 }
 .hp-text span {
   border-radius: 3px;
-  padding: 1px 0;
+  padding: 1px 1px;
+}
+.hp-empty-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cf-text-3);
 }
 .hp-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 360px;
+  max-height: 400px;
   overflow-y: auto;
+  padding-right: 2px;
 }
 .hp-item {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 11px 12px;
   border: 1px solid #eef1f5;
   border-radius: 10px;
 }
+.hp-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .hp-type {
-  align-self: flex-start;
   font-size: 11px;
-  padding: 1px 8px;
+  padding: 1px 9px;
   border-radius: 6px;
+}
+.hp-conf {
+  font-size: 12px;
+  color: var(--cf-text-3);
+  font-variant-numeric: tabular-nums;
 }
 .hp-item-text {
   font-size: 13px;
   color: var(--cf-text);
+  line-height: 1.5;
 }
 .hp-sugg {
   font-size: 12px;
