@@ -14,7 +14,7 @@
 // 供冻结契约 src/shared/config.ts 读取 MOCK_MODE（CJS 按 require 顺序求值）。
 import '../core/load-env';
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import { join } from 'path';
 import { IPC } from '../shared/ipc';
 import {
@@ -85,6 +85,7 @@ function registerIpcHandlers(): void {
 // ==================== 应用生命周期 ====================
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null); // 移除默认菜单栏（File/Edit/View...），界面更干净
   registerIpcHandlers();
   createWindow();
 

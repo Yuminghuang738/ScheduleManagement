@@ -26,6 +26,10 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     plugins: [vue()],
+    // 把 Mock 开关注入渲染层（构建期读取环境变量，与 shared/config.ts 的默认逻辑保持一致）
+    define: {
+      __MOCK_MODE__: JSON.stringify(process.env.MOCK_MODE !== 'false')
+    },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),
       emptyOutDir: true

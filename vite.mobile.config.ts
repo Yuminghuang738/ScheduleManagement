@@ -13,6 +13,12 @@ import { resolve } from 'path';
 export default defineConfig({
   root: resolve(__dirname, 'src/renderer'),
   plugins: [vue()],
+  // 注入 Mock 开关：__MOCK_MODE__ 供 App.vue 徽标使用；
+  // process.env.MOCK_MODE 替换 shared/config.ts 的读取（浏览器/Capacitor 无 process）
+  define: {
+    __MOCK_MODE__: JSON.stringify(process.env.MOCK_MODE !== 'false'),
+    'process.env.MOCK_MODE': JSON.stringify(process.env.MOCK_MODE !== 'false'),
+  },
   resolve: {
     alias: {
       '@shared': resolve(__dirname, 'src/shared'),

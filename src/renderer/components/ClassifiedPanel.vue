@@ -311,14 +311,12 @@ onMounted(() => {
   padding-bottom: 10px;
   border-bottom: 1px solid #f0f2f5;
 }
-
 .panel-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
   color: #1f2329;
 }
-
 .panel-subtitle {
   margin: 4px 0 0;
   font-size: 12px;
@@ -331,13 +329,11 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
 }
-
 .save-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
 .hint {
   font-size: 12px;
   color: #b0b6c0;
@@ -347,7 +343,6 @@ onMounted(() => {
 .type-tabs :deep(.el-tabs__header) {
   margin-bottom: 8px;
 }
-
 .type-tabs :deep(.el-tabs__item) {
   font-size: 13px;
 }
@@ -358,22 +353,24 @@ onMounted(() => {
   gap: 8px;
 }
 
-/* ---------- 列表 ---------- */
+/* ---------- 列表容器 ---------- */
 .list-block {
   flex: 1;
   min-height: 120px;
   overflow-y: auto;
 }
 
+/* ---------- 列表 ---------- */
 .item-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
+/* ---------- 单条记录 ---------- */
 .item {
   padding: 10px 12px;
   background: #fafbfc;
@@ -381,18 +378,15 @@ onMounted(() => {
   border-radius: 8px;
   transition: background-color 0.15s, border-color 0.15s;
 }
-
 .item:hover {
   background: #f5f7fa;
   border-color: #dbe1e8;
 }
-
 .item-head {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
 .type-tag {
   flex: none;
   padding: 1px 6px;
@@ -401,7 +395,6 @@ onMounted(() => {
   border: 1px solid transparent;
   border-radius: 4px;
 }
-
 .item-title {
   flex: 1;
   min-width: 0;
@@ -412,13 +405,11 @@ onMounted(() => {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-
 .item-time {
   flex: none;
   font-size: 11px;
   color: #a0a6b0;
 }
-
 .item-content {
   margin: 6px 0 0;
   font-size: 12px;
@@ -426,7 +417,6 @@ onMounted(() => {
   color: #5c6270;
   word-break: break-word;
 }
-
 .item-tags {
   display: flex;
   flex-wrap: wrap;
@@ -443,7 +433,6 @@ onMounted(() => {
   padding-top: 10px;
   border-top: 1px solid #f0f2f5;
 }
-
 .total {
   font-size: 12px;
   color: #8a919f;

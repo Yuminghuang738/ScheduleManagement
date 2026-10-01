@@ -209,7 +209,7 @@ async function handleDelete(row: ScheduleItem) {
       confirmButtonClass: 'el-button--danger',
     });
   } catch {
-    return; // 用户取消
+    return;
   }
   const ok = await store.deleteSchedule(row.id);
   if (ok) ElMessage.success('已删除');
