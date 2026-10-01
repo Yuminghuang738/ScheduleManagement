@@ -1,28 +1,40 @@
 <script setup lang="ts">
 /**
- * 日程主视图 —— 清单卡片样式
+ * 日程主视图 —— 清单卡片样式（Task 3）
  *
- * - 顶部马尔斯绿头图：日期徽章 + 近 7 天日程量曲线 + 完成度
- * - 任务行：圆角方形勾选框 + 彩色元信息（时间/地点），紧急/高优先级带左侧色条
- * - 右下角悬浮 FAB 新建日程（走 schedule:create 契约）
- * - Mock 模式下展示 mock.ts 里的 5 条演示日程
+ * 功能：
+ * - 顶部文本输入 + 「生成日程」：调 extractHighlights → emit('open-highlight', {...})
+ * - 任务行：圆角方形勾选框 + 彩色元信息，紧急/高优先级左侧色条
+ * - 新建 / 编辑（点击行）弹窗，字段齐全（含颜色 color-picker）
+ * - 删除二次确认、完成勾选、挂载自动加载
+ *
+ * 视觉：马尔斯绿主色头图 + 近 7 天日程量曲线 + 完成度 + 悬浮 FAB
  */
 import { ref, reactive, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAppApi } from '../hooks/useAppApi';
-import type { ScheduleItem, Priority } from '../../shared/types';
+import type {
+  ScheduleItem,
+  Priority,
+  ExtractHighlightsRes,
+} from '../../shared/types';
 
 const api = useAppApi();
+
+/* ---------- 事件：划重点预览 ---------- */
+const emit = defineEmits<{
+  (e: 'open-highlight', payload: ExtractHighlightsRes): void;
+}>();
 
 const schedules = ref<ScheduleItem[]>([]);
 const loading = ref(false);
 
 /* ---------- 优先级映射 ---------- */
-const PRIO: Record<Priority, { text: string; color: string }> = {
-  urgent: { text: '紧急', color: '#f54a45' },
-  high: { text: '高', color: '#ff8f1f' },
-  medium: { text: '中', color: '#0d9488' },
-  low: { text: '低', color: '#a2a9b8' },
+const PRIO: Record<Priority, { text: string; color: string; tag: string }> = {
+  urgent: { text: '紧急', color: '#f54a45', tag: 'danger' },
+  high: { text: '高', color: '#ff8f1f', tag: 'warning' },
+  medium: { text: '中', color: '#0d9488', tag: 'primary' },
+  low: { text: '低', color: '#a2a9b8', tag: 'info' },
 };
 const prioKeys = Object.keys(PRIO) as Priority[];
 
@@ -145,13 +157,40 @@ async function remove(item: ScheduleItem) {
   await load();
 }
 
-/* ---------- 新建日程 ---------- */
+/* ---------- 顶部文本生成日程 ---------- */
+const genText = ref('');
+const generating = ref(false);
+
+async function generate() {
+  const text = genText.value.trim();
+  if (!text) {
+    ElMessage.warning('先粘贴一段日程文字');
+    return;
+  }
+  generating.value = true;
+  try {
+    const res = await api.extractHighlights({ text });
+    emit('open-highlight', res);
+  } catch {
+    // 错误提示已在 useAppApi 统一弹出
+  } finally {
+    generating.value = false;
+  }
+}
+
+/* ---------- 新建 / 编辑日程 ---------- */
 const dlg = ref(false);
+const editingId = ref<string | null>(null);
 const form = reactive({
   title: '',
+  description: '',
   range: null as [string, string] | null,
+  isAllDay: false,
   priority: 'medium' as Priority,
+  tagsText: '',
+  color: '#0d9488',
   location: '',
+  contact: '',
 });
 
 function fmtISO(d: Date): string {
@@ -162,14 +201,41 @@ function openCreate() {
   const s = new Date();
   s.setMinutes(0, 0, 0);
   s.setHours(s.getHours() + 1);
+  editingId.value = null;
   form.title = '';
+  form.description = '';
   form.range = [fmtISO(s), fmtISO(new Date(s.getTime() + 3600000))];
+  form.isAllDay = false;
   form.priority = 'medium';
+  form.tagsText = '';
+  form.color = '#0d9488';
   form.location = '';
+  form.contact = '';
   dlg.value = true;
 }
 
-async function submitCreate() {
+function openEdit(item: ScheduleItem) {
+  editingId.value = item.id;
+  form.title = item.title;
+  form.description = item.description;
+  form.range = [item.startTime, item.endTime];
+  form.isAllDay = item.isAllDay;
+  form.priority = item.priority;
+  form.tagsText = item.tags.join('，');
+  form.color = item.color || '#0d9488';
+  form.location = item.location;
+  form.contact = item.contact;
+  dlg.value = true;
+}
+
+function splitTags(s: string): string[] {
+  return s
+    .split(/[,，、\s]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+}
+
+async function submit() {
   if (!form.title.trim()) {
     ElMessage.warning('请填写标题');
     return;
@@ -182,22 +248,40 @@ async function submitCreate() {
     ElMessage.warning('结束时间不能早于开始时间');
     return;
   }
-  await api.create({
+  const input = {
     title: form.title.trim(),
-    description: '',
+    description: form.description.trim(),
     startTime: form.range[0],
     endTime: form.range[1],
-    isAllDay: false,
+    isAllDay: form.isAllDay,
     priority: form.priority,
-    tags: [],
+    tags: splitTags(form.tagsText),
+    color: form.color,
     location: form.location.trim(),
-  });
+    contact: form.contact.trim(),
+  };
+
+  if (editingId.value) {
+    // 编辑：合并回完整实体（update 契约要求 ScheduleItem）
+    const origin = schedules.value.find(s => s.id === editingId.value);
+    if (!origin) {
+      ElMessage.error('找不到原日程');
+      return;
+    }
+    await api.update({ ...origin, ...input });
+    ElMessage.success('已保存修改');
+  } else {
+    await api.create(input);
+    ElMessage.success('已添加到日程');
+  }
   dlg.value = false;
-  ElMessage.success('已添加到日程');
   await load();
 }
 
 onMounted(load);
+
+/* 暴露给父组件：导入日程后刷新 */
+defineExpose({ load });
 </script>
 
 <template>
@@ -226,7 +310,6 @@ onMounted(load);
         </div>
       </div>
 
-      <!-- 装饰波浪 -->
       <svg class="hero-wave" viewBox="0 0 400 80" preserveAspectRatio="none">
         <path d="M0 62 C 70 22, 150 88, 230 48 S 350 28, 400 56 L 400 80 L 0 80 Z"
               fill="rgba(255,255,255,0.10)" />
@@ -234,6 +317,19 @@ onMounted(load);
               fill="rgba(255,255,255,0.08)" />
       </svg>
     </header>
+
+    <!-- 顶部：文本生成日程 -->
+    <div class="generator">
+      <el-input
+        v-model="genText"
+        type="textarea"
+        :autosize="{ minRows: 2, maxRows: 4 }"
+        placeholder="粘贴一段文字，AI 帮你识别成日程，例如：下周五上午 10 点在 3F 会议室评审产品路线图…"
+      />
+      <el-button type="primary" class="gen-btn" :loading="generating" @click="generate">
+        生成日程
+      </el-button>
+    </div>
 
     <div class="tl-scroll" v-loading="loading">
       <div v-for="g in groups" :key="g.key" class="day-group">
@@ -245,6 +341,7 @@ onMounted(load);
           class="task"
           :class="{ done: item.isCompleted, bar: item.priority === 'urgent' || item.priority === 'high' }"
           :style="{ '--c': PRIO[item.priority].color }"
+          @click="openEdit(item)"
         >
           <button
             class="check"
@@ -260,12 +357,11 @@ onMounted(load);
 
           <div class="task-main">
             <div class="row1">
+              <span class="color-chip" :style="{ background: item.color }" />
               <span class="title">{{ item.title }}</span>
-              <span
-                v-if="item.priority === 'urgent' || item.priority === 'high'"
-                class="prio"
-                :style="{ color: PRIO[item.priority].color }"
-              ><i :style="{ background: PRIO[item.priority].color }" />{{ PRIO[item.priority].text }}</span>
+              <el-tag size="small" :type="PRIO[item.priority].tag as any" effect="light" disable-transitions>
+                {{ PRIO[item.priority].text }}
+              </el-tag>
             </div>
 
             <div class="meta">
@@ -300,11 +396,11 @@ onMounted(load);
             <p v-if="item.description" class="desc">{{ item.description }}</p>
           </div>
 
-          <button class="del" @click.stop="remove(item)">删除</button>
+          <button class="del" title="删除" @click.stop="remove(item)">删除</button>
         </article>
       </div>
 
-      <!-- 空状态：克制、有引导 -->
+      <!-- 空状态 -->
       <div v-if="!loading && schedules.length === 0" class="empty">
         <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#bfd3cf"
              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -312,7 +408,7 @@ onMounted(load);
           <path d="M12 7v5l3 2" />
         </svg>
         <p class="empty-t">还没有任何安排</p>
-        <p class="empty-s">点击右下角 ＋ 新建日程，或在左侧粘贴一段文字让 AI 帮你归档</p>
+        <p class="empty-s">在上方粘贴一段文字生成日程，或点击右下角 ＋ 手动新建</p>
       </div>
     </div>
 
@@ -324,11 +420,14 @@ onMounted(load);
       </svg>
     </button>
 
-    <!-- 新建日程 -->
-    <el-dialog v-model="dlg" title="新建日程" width="460px">
-      <el-form label-width="64px" label-position="left">
+    <!-- 新建 / 编辑日程 -->
+    <el-dialog v-model="dlg" :title="editingId ? '编辑日程' : '新建日程'" width="520px">
+      <el-form label-width="72px" label-position="left">
         <el-form-item label="标题">
           <el-input v-model="form.title" placeholder="例如：周五下午 产品评审会" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="可选" maxlength="200" />
         </el-form-item>
         <el-form-item label="时间">
           <el-date-picker
@@ -337,21 +436,34 @@ onMounted(load);
             value-format="YYYY-MM-DDTHH:mm:ss"
             start-placeholder="开始"
             end-placeholder="结束"
+            :disabled="form.isAllDay"
             style="width: 100%"
           />
+        </el-form-item>
+        <el-form-item label="全天">
+          <el-switch v-model="form.isAllDay" />
         </el-form-item>
         <el-form-item label="优先级">
           <el-select v-model="form.priority" style="width: 100%">
             <el-option v-for="k in prioKeys" :key="k" :value="k" :label="PRIO[k].text" />
           </el-select>
         </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="form.tagsText" placeholder="用逗号/空格分隔，如：工作, 重要" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="颜色">
+          <el-color-picker v-model="form.color" />
+        </el-form-item>
         <el-form-item label="地点">
           <el-input v-model="form.location" placeholder="可选" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="联系人">
+          <el-input v-model="form.contact" placeholder="可选" maxlength="50" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate">创建</el-button>
+        <el-button type="primary" @click="submit">{{ editingId ? '保存' : '创建' }}</el-button>
       </template>
     </el-dialog>
   </section>
@@ -379,7 +491,6 @@ onMounted(load);
   color: #fff;
   overflow: hidden;
 }
-
 .hero-title {
   display: flex;
   align-items: center;
@@ -402,7 +513,6 @@ onMounted(load);
   font-size: 12px;
   color: rgba(255, 255, 255, 0.82);
 }
-
 .hero-right {
   position: relative;
   z-index: 1;
@@ -435,7 +545,6 @@ onMounted(load);
   font-size: 11px;
   color: rgba(255, 255, 255, 0.75);
 }
-
 .hero-wave {
   position: absolute;
   right: 0;
@@ -443,6 +552,23 @@ onMounted(load);
   width: 58%;
   height: 100%;
   pointer-events: none;
+}
+
+/* ---------- 生成区 ---------- */
+.generator {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--cf-line);
+}
+.generator :deep(.el-textarea) {
+  flex: 1;
+}
+.gen-btn {
+  flex: none;
+  margin-top: 2px;
 }
 
 /* ---------- 列表 ---------- */
@@ -474,7 +600,7 @@ onMounted(load);
   color: var(--cf-text-3);
 }
 
-/* 任务行：白卡片 */
+/* 任务行：白卡片，点击进入编辑 */
 .task {
   position: relative;
   display: flex;
@@ -486,6 +612,7 @@ onMounted(load);
   box-shadow: 0 1px 2px rgba(23, 43, 40, 0.06);
   transition: box-shadow 0.15s;
   overflow: hidden;
+  cursor: pointer;
 }
 .task + .task {
   margin-top: 9px;
@@ -493,7 +620,6 @@ onMounted(load);
 .task:hover {
   box-shadow: 0 4px 14px rgba(23, 43, 40, 0.1);
 }
-/* 紧急/高优先级：左侧色条 */
 .task::before {
   content: '';
   position: absolute;
@@ -507,7 +633,6 @@ onMounted(load);
   display: none;
 }
 
-/* 圆角方形勾选框 */
 .check {
   width: 17px;
   height: 17px;
@@ -540,6 +665,12 @@ onMounted(load);
   align-items: center;
   gap: 8px;
 }
+.color-chip {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
 .title {
   font-size: 14px;
   font-weight: 500;
@@ -549,20 +680,7 @@ onMounted(load);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.prio {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-}
-.prio i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
 
-/* 元信息：时间用主色，其余灰 */
 .meta {
   margin-top: 6px;
   display: flex;
@@ -618,7 +736,6 @@ onMounted(load);
   color: var(--cf-danger);
 }
 
-/* 已完成态 */
 .task.done {
   opacity: 0.55;
 }

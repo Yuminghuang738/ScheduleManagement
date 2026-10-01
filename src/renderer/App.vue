@@ -9,12 +9,33 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import ScheduleTable from './components/ScheduleTable.vue';
 import ClassifiedPanel from './components/ClassifiedPanel.vue';
 import HighlightPreviewModal from './components/HighlightPreviewModal.vue';
+import type { ExtractHighlightsRes } from '../shared/types';
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const pad = (n: number) => String(n).padStart(2, '0');
 
 const now = ref(new Date());
 let timer: ReturnType<typeof setInterval> | undefined;
+
+/* ---------- 划重点预览弹窗（调度中心） ---------- */
+const showHighlight = ref(false);
+const highlightData = ref<ExtractHighlightsRes>({
+  highlights: [],
+  draftSchedules: [],
+  fullText: '',
+});
+const scheduleRef = ref<InstanceType<typeof ScheduleTable>>();
+
+function onOpenHighlight(payload: ExtractHighlightsRes) {
+  highlightData.value = payload;
+  showHighlight.value = true;
+}
+
+function onImported() {
+  showHighlight.value = false;
+  // 通知日程表刷新
+  scheduleRef.value?.load();
+}
 
 const dateText = computed(() => {
   const d = now.value;
@@ -55,11 +76,18 @@ onUnmounted(() => clearInterval(timer));
         <ClassifiedPanel />
       </aside>
       <main class="main">
-        <ScheduleTable />
+        <ScheduleTable ref="scheduleRef" @open-highlight="onOpenHighlight" />
       </main>
     </div>
 
-    <HighlightPreviewModal />
+    <HighlightPreviewModal
+      :visible="showHighlight"
+      :highlights="highlightData.highlights"
+      :draft-schedules="highlightData.draftSchedules"
+      :full-text="highlightData.fullText"
+      @close="showHighlight = false"
+      @imported="onImported"
+    />
   </div>
 </template>
 
