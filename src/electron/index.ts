@@ -5,7 +5,14 @@
  * 职责：
  *   1. 创建 BrowserWindow，加载 preload + 渲染页面
  *   2. 注册全部 IPC handler（schedule:* + search:* 内部）
+ *
+ * 注：主进程产物为 CJS（见 electron.vite.config.ts 的 formats: ['cjs']），
+ * 因此这里直接使用 __dirname，不用 ESM 的 import.meta.url。
  */
+
+// 必须排在所有 import 之前：把项目根 .env 加载进 process.env，
+// 供冻结契约 src/shared/config.ts 读取 MOCK_MODE（CJS 按 require 顺序求值）。
+import '../core/load-env';
 
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
@@ -25,12 +32,17 @@ import { multiPlatformQuery, getSummary } from '../core/search-agent';
 // ==================== 安全约定 ====================
 // contextIsolation=true、nodeIntegration=false，由 BrowserWindow 默认值保证，
 // 这里显式声明 webPreferences 以确保安全。
+// sandbox 保持 false：preload 产物虽已为 CJS，但保留原设置以免影响既有行为。
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    title: 'ChronoFlow',
+    width: 1360,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 700,
+    show: false,
+    backgroundColor: '#eef2f8',
+    title: 'ChronoFlow 智能日程',
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -39,10 +51,14 @@ function createWindow(): void {
     },
   });
 
+  // 等首帧渲染完成再显示，避免白屏闪烁
+  win.once('ready-to-show', () => win.show());
+
   // 开发模式：加载 electron-vite 的 dev server
   // 生产模式：加载打包后的 index.html
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
   }
