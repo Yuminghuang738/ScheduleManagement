@@ -1,0 +1,95 @@
+# ChronoFlow 持续集成（CI）
+#
+# 触发时机
+#   - push 到 main / feat/** / merge/** 分支
+#   - 向 main 发起 Pull Request
+#   - 在 Actions 页面手动触发（workflow_dispatch）
+#
+# 做什么
+#   1. 安装依赖（npm ci + 缓存）
+#   2. 类型检查（tsc --noEmit）
+#   3. 代码风格检查（ESLint，当前为「非阻断」，见文件末尾说明）
+#   4. 构建桌面端（Electron：out/）
+#   5. 构建移动端（Capacitor Web 产物：dist-mobile/）
+#   6. 上传两端构建产物为 Artifact
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'merge/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 同一分支的新提交会取消上一次尚未完成的运行，节省 Actions 额度
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    name: 类型检查 · 双端构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 代码风格检查（ESLint）
+        # 仓库当前尚未提交 eslint flat config，此步骤仅作提示、不阻断流水线。
+        # 待补充 eslint.config.js 后，可删除 continue-on-error 使其成为强制关卡。
+        run: npm run lint
+        continue-on-error: true
+
+      - name: 构建桌面端（Electron）
+        run: npx electron-vite build
+
+      - name: 构建移动端（Capacitor Web 产物）
+        run: npm run build:mobile
+
+      - name: 校验构建产物
+        run: |
+          set -e
+          for dir in out dist-mobile; do
+            if [ ! -d "$dir" ] || [ -z "$(ls -A "$dir")" ]; then
+              echo "::error::目录 $dir 不存在或为空，构建可能失败"
+              exit 1
+            fi
+            echo "$dir 产物大小：$(du -sh "$dir" | cut -f1)"
+          done
+
+      - name: 上传桌面端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 上传移动端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-build
+          path: dist-mobile/
+          if-no-files-found: error
+          retention-days: 7
