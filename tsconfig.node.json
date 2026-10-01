@@ -6,7 +6,10 @@
     "outDir": "./out"
   },
   "include": [
-    "src/**/*.ts"
+    "src/core/**/*.ts",
+    "src/electron/**/*.ts",
+    "src/mobile/**/*.ts",
+    "src/shared/**/*.ts"
   ],
   "exclude": [
     "src/renderer/**/*.ts",

@@ -1,6 +1,6 @@
 /**
- * ChronoFlow 预加载脚本 —— contextBridge 安全桥
- * 【集成工程师维护 —— 禁止其他人修改】
+ * ChronoFlow Electron 预加载脚本
+ * 【集成工程师维护】
  *
  * 安全约定：仅暴露 schedule:* 白名单，search:* 绝不出现在这里。
  */
@@ -9,7 +9,6 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/ipc';
 import type { ScheduleApi } from '../shared/api';
 
-// ---- 类型安全的白名单暴露 ----
 const appApi: ScheduleApi = {
   genTableFromText:    (req) => ipcRenderer.invoke(IPC.SCHEDULE_GEN_TABLE, req),
   extractHighlights:   (req) => ipcRenderer.invoke(IPC.SCHEDULE_EXTRACT_HIGHLIGHTS, req),

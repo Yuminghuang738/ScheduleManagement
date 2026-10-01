@@ -1,5 +1,5 @@
 /**
- * ChronoFlow 日程主模块
+ * ChronoFlow 日程主模块（双端通用）
  *
  * 实现三大核心能力 + 日程 CRUD：
  *   1. genTableFromText —— 输入文字，智能生成时间表
@@ -7,9 +7,10 @@
  *   3. saveClassifiedInfo / queryClassifiedItems —— 零散信息自动分类存储
  *   4. create / update / delete / query —— 日程增删改查
  *
+ * 本模块不依赖 Electron 或 Capacitor，纯 TypeScript 逻辑。
  * 骨架说明：
- *   - MOCK_MODE=true   → 走 mock 分支（返回 mock-data.json 样例数据）
- *   - MOCK_MODE=false  → 抛出 NOT_IMPLEMENTED，把实现代码填入 throw 位置
+ *   - MOCK_MODE=true   → 走 mock 分支
+ *   - MOCK_MODE=false  → 抛出 NOT_IMPLEMENTED
  */
 
 import type {
@@ -21,14 +22,24 @@ import type {
   ScheduleInput, ScheduleItem, ScheduleQueryReq, ScheduleQueryRes,
 } from '../shared/types';
 import { MOCK_MODE } from '../shared/config';
-import { mockScheduleData } from '../shared/mock';
-import { NOT_IMPLEMENTED } from '../shared/mock';
+import { mockScheduleData, NOT_IMPLEMENTED } from '../shared/mock';
+import { multiPlatformQuery } from './search-agent';
 
 // ==================== 核心能力 1：文本生成时间表 ====================
 
 export async function genTableFromText(req: GenScheduleTableReq): Promise<Result<GenScheduleTableRes>> {
   if (MOCK_MODE) {
-    return { success: true, data: mockScheduleData.genTableFromText(req) };
+    // 调搜索 Agent 获取参考信息
+    const searchRes = await multiPlatformQuery({ query: req.text });
+    const refCount = searchRes.data?.length ?? 0;
+    const mockData = mockScheduleData.genTableFromText(req);
+    return {
+      success: true,
+      data: {
+        ...mockData,
+        explanation: `${mockData.explanation}（搜索 Agent 返回 ${refCount} 条参考）`,
+      },
+    };
   }
   throw NOT_IMPLEMENTED;
 }

@@ -8,7 +8,7 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: {
-        entry: resolve(__dirname, 'src/main/index.ts'),
+        entry: resolve(__dirname, 'src/electron/index.ts'),
         formats: ['es']
       }
     }
@@ -18,7 +18,7 @@ export default defineConfig({
     build: {
       outDir: 'out/preload',
       lib: {
-        entry: resolve(__dirname, 'src/preload/app-preload.ts'),
+        entry: resolve(__dirname, 'src/electron/preload.ts'),
         formats: ['es']
       }
     }
@@ -32,7 +32,10 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        '@shared': resolve(__dirname, 'src/shared')
+        '@shared': resolve(__dirname, 'src/shared'),
+        '@core': resolve(__dirname, 'src/core'),
+        '@mobile': resolve(__dirname, 'src/mobile'),
+        '@ctrl/tinycolor': resolve(__dirname, 'node_modules/@ctrl/tinycolor/dist/module/public_api.js')
       }
     }
   }
