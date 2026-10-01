@@ -1,11 +1,12 @@
 /**
- * ChronoFlow 渲染进程 API 统一封装
+ * ChronoFlow 统一 API 封装（双端通用）
  *
- * 统一处理 Result<T>：success 时返回 data，失败时弹错误提示。
- * 禁止在组件里直接 window.appApi.xxx()，必须通过这里调用。
+ * 桌面端走 Electron IPC（window.appApi → preload → 主进程）
+ * 手机端走 Capacitor Bridge（window.appApi → core/ 直接调用）
+ *
+ * 渲染层组件不需要关心当前在哪个平台，只管调 useAppApi()。
  */
 
-import type { ScheduleApi } from '../../shared/api';
 import type {
   GenScheduleTableReq, GenScheduleTableRes,
   ExtractHighlightsReq, ExtractHighlightsRes,
@@ -14,6 +15,7 @@ import type {
   ScheduleInput, ScheduleItem,
   ScheduleQueryReq, ScheduleQueryRes,
 } from '../../shared/types';
+import type { ScheduleApi } from '../../shared/api';
 
 declare global {
   interface Window {
@@ -31,29 +33,26 @@ async function call<T>(action: () => Promise<{ success: boolean; data?: T; error
 }
 
 export function useAppApi() {
+  const api = window.appApi;
+  if (!api) {
+    throw new Error('appApi 未初始化，请确认 preload（桌面端）或 registerMobileBridge（手机端）已执行');
+  }
   return {
     genTableFromText: (req: GenScheduleTableReq) =>
-      call(() => window.appApi.genTableFromText(req)),
-
+      call(() => api.genTableFromText(req)),
     extractHighlights: (req: ExtractHighlightsReq) =>
-      call(() => window.appApi.extractHighlights(req)),
-
+      call(() => api.extractHighlights(req)),
     saveClassifiedInfo: (req: SaveInfoReq) =>
-      call(() => window.appApi.saveClassifiedInfo(req)),
-
+      call(() => api.saveClassifiedInfo(req)),
     queryClassifiedItems: (req: QueryClassifiedReq) =>
-      call(() => window.appApi.queryClassifiedItems(req)),
-
+      call(() => api.queryClassifiedItems(req)),
     create: (input: ScheduleInput) =>
-      call(() => window.appApi.create(input)),
-
+      call(() => api.create(input)),
     update: (item: ScheduleItem) =>
-      call(() => window.appApi.update(item)),
-
+      call(() => api.update(item)),
     delete: (id: string) =>
-      call(() => window.appApi.delete(id)),
-
+      call(() => api.delete(id)),
     query: (req: ScheduleQueryReq) =>
-      call(() => window.appApi.query(req)),
+      call(() => api.query(req)),
   };
 }

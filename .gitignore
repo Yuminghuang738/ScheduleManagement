@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+dist-mobile/
+android/
+ios/
 .env
 *.log
 .DS_Store

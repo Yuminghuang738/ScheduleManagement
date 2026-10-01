@@ -14,7 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
-      "@main/*": ["src/main/*"],
+      "@core/*": ["src/core/*"],
+      "@electron/*": ["src/electron/*"],
+      "@mobile/*": ["src/mobile/*"],
       "@renderer/*": ["src/renderer/*"]
     }
   },
