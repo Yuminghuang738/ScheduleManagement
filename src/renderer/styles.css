@@ -1,19 +1,29 @@
 /* ============================================================
  * ChronoFlow 全局样式 —— 设计基座
- * 理念：留白 + 细线 + 单一主色，安静但有秩序
+ * 基调：马尔斯绿主色 + 白卡片 + 大量留白，安静但有秩序
  * ============================================================ */
 
 :root {
-  --cf-bg: #f5f6f8;          /* 应用底色 */
+  --cf-bg: #f3f6f5;          /* 应用底色：带一点绿灰 */
   --cf-panel: #ffffff;       /* 面板 */
-  --cf-line: #e7eaf0;        /* 分隔线 */
-  --cf-text: #1f2430;        /* 主文字 */
-  --cf-text-2: #66708a;      /* 次级文字 */
-  --cf-text-3: #9aa3b8;      /* 弱文字 */
-  --cf-accent: #4c6bf5;      /* 主色： Chrono 蓝 */
-  --cf-accent-soft: #eef1fe; /* 主色弱背景 */
+  --cf-line: #e6ecea;        /* 分隔线 */
+  --cf-text: #1f2a28;        /* 主文字 */
+  --cf-text-2: #5f6f6c;      /* 次级文字 */
+  --cf-text-3: #97a5a2;      /* 弱文字 */
+  --cf-accent: #0d9488;      /* 主色：马尔斯绿 */
+  --cf-accent-deep: #0b857c; /* 主色深 */
+  --cf-accent-soft: #e6f5f3; /* 主色弱背景 */
   --cf-danger: #f54a45;
   --cf-radius: 14px;
+
+  /* Element Plus 主色对齐马尔斯绿 */
+  --el-color-primary: #0d9488;
+  --el-color-primary-light-3: #3fb5aa;
+  --el-color-primary-light-5: #79c9c1;
+  --el-color-primary-light-7: #b5ded9;
+  --el-color-primary-light-8: #cee9e5;
+  --el-color-primary-light-9: #e6f5f3;
+  --el-color-primary-dark-2: #0a766d;
 }
 
 * {
@@ -41,11 +51,11 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #dbe0e8;
+  background: #d6e0dd;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #c8cfda;
+  background: #c2d1cd;
 }
 ::-webkit-scrollbar-track {
   background: transparent;

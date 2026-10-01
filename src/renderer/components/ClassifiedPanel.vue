@@ -265,12 +265,12 @@ onMounted(load);
   background: currentColor;
 }
 .type-chip.schedule {
-  color: #4c6bf5;
-  background: #eef1fe;
+  color: #0d9488;
+  background: #e6f5f3;
 }
 .type-chip.reference {
-  color: #0e9f6e;
-  background: #e7f7f0;
+  color: #6366f1;
+  background: #eef0fe;
 }
 .type-chip.contact {
   color: #b26e00;

@@ -92,11 +92,11 @@ onUnmounted(() => clearInterval(timer));
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #4c6bf5, #6a8bff);
+  background: linear-gradient(135deg, #14a396, #0b857c);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(76, 107, 245, 0.35);
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
 }
 
 .name {

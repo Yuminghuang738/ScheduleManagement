@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * 日程主视图 —— 时间轴样式
+ * 日程主视图 —— 清单卡片样式
  *
- * - 按天分组的时间轴（今天 / 明天 / 日期），色点沿用 item.color
- * - 完成勾选、悬停删除、新建日程（走 schedule:create 契约）
+ * - 顶部马尔斯绿头图：日期徽章 + 近 7 天日程量曲线 + 完成度
+ * - 任务行：圆角方形勾选框 + 彩色元信息（时间/地点），紧急/高优先级带左侧色条
+ * - 右下角悬浮 FAB 新建日程（走 schedule:create 契约）
  * - Mock 模式下展示 mock.ts 里的 5 条演示日程
  */
 import { ref, reactive, computed, onMounted } from 'vue';
@@ -20,7 +21,7 @@ const loading = ref(false);
 const PRIO: Record<Priority, { text: string; color: string }> = {
   urgent: { text: '紧急', color: '#f54a45' },
   high: { text: '高', color: '#ff8f1f' },
-  medium: { text: '中', color: '#4c6bf5' },
+  medium: { text: '中', color: '#0d9488' },
   low: { text: '低', color: '#a2a9b8' },
 };
 const prioKeys = Object.keys(PRIO) as Priority[];
@@ -28,13 +29,45 @@ const prioKeys = Object.keys(PRIO) as Priority[];
 /* ---------- 统计 ---------- */
 const total = computed(() => schedules.value.length);
 const doneCount = computed(() => schedules.value.filter(s => s.isCompleted).length);
-const pct = computed(() =>
-  total.value ? `${Math.round((doneCount.value / total.value) * 100)}%` : '0%'
+const pctNum = computed(() =>
+  total.value ? Math.round((doneCount.value / total.value) * 100) : 0
 );
 
-/* ---------- 按天分组 ---------- */
+/* ---------- 头图：日期徽章 + 近 7 天曲线 ---------- */
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const pad = (n: number) => String(n).padStart(2, '0');
 
+const _now = new Date();
+const dateBadge = `${_now.getMonth() + 1}月${_now.getDate()}日 ${WEEK[_now.getDay()]}`;
+
+const sparkPath = computed(() => {
+  const days = 7;
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  const counts: number[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(base.getTime() - i * 86400000);
+    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    counts.push(schedules.value.filter(s => s.startTime.slice(0, 10) === key).length);
+  }
+  const max = Math.max(...counts, 1);
+  const W = 120, H = 36, P = 4;
+  const pts = counts.map((v, i) => [
+    P + (i * (W - P * 2)) / (days - 1),
+    H - P - (v / max) * (H - P * 2),
+  ] as [number, number]);
+  if (!pts.length) return '';
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1];
+    const [x1, y1] = pts[i];
+    const mx = (x0 + x1) / 2;
+    d += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+  }
+  return d;
+});
+
+/* ---------- 按天分组 ---------- */
 function dayLabel(key: string): string {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -122,8 +155,7 @@ const form = reactive({
 });
 
 function fmtISO(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
 }
 
 function openCreate() {
@@ -170,57 +202,82 @@ onMounted(load);
 
 <template>
   <section class="panel">
-    <header class="head">
-      <div class="head-titles">
-        <h2>日程安排</h2>
-        <p v-if="total" class="stat">
-          共 {{ total }} 项 · 已完成 {{ doneCount }}
-          <span class="bar"><i :style="{ width: pct }" /></span>
+    <!-- 头图：主色块 + 统计 -->
+    <header class="hero">
+      <div class="hero-main">
+        <div class="hero-title">
+          <h2>日程安排</h2>
+          <span class="hero-date">{{ dateBadge }}</span>
+        </div>
+        <p class="hero-sub">
+          <template v-if="total">共 {{ total }} 项 · 已完成 {{ doneCount }} · 待办 {{ total - doneCount }}</template>
+          <template v-else>把要做的事安排进来</template>
         </p>
-        <p v-else class="stat">还没有安排</p>
       </div>
-      <el-button type="primary" size="small" @click="openCreate">＋ 新建日程</el-button>
+
+      <div class="hero-right">
+        <svg class="spark" viewBox="0 0 120 36">
+          <path :d="sparkPath" fill="none" stroke="rgba(255,255,255,0.9)"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div class="hero-pct">
+          <b>{{ pctNum }}<i>%</i></b>
+          <span>完成度</span>
+        </div>
+      </div>
+
+      <!-- 装饰波浪 -->
+      <svg class="hero-wave" viewBox="0 0 400 80" preserveAspectRatio="none">
+        <path d="M0 62 C 70 22, 150 88, 230 48 S 350 28, 400 56 L 400 80 L 0 80 Z"
+              fill="rgba(255,255,255,0.10)" />
+        <path d="M0 72 C 90 40, 180 92, 260 62 S 360 46, 400 68 L 400 80 L 0 80 Z"
+              fill="rgba(255,255,255,0.08)" />
+      </svg>
     </header>
 
     <div class="tl-scroll" v-loading="loading">
       <div v-for="g in groups" :key="g.key" class="day-group">
         <div class="day-label">{{ g.label }}<span class="day-count">{{ g.items.length }} 项</span></div>
 
-        <article v-for="item in g.items" :key="item.id" class="tl-item">
-          <div class="tl-time">
-            <b v-if="item.isAllDay">全天</b>
-            <template v-else>
-              <b>{{ timeHM(item.startTime) }}</b>
-              <i>{{ timeHM(item.endTime) }}</i>
-            </template>
-          </div>
+        <article
+          v-for="item in g.items"
+          :key="item.id"
+          class="task"
+          :class="{ done: item.isCompleted, bar: item.priority === 'urgent' || item.priority === 'high' }"
+          :style="{ '--c': PRIO[item.priority].color }"
+        >
+          <button
+            class="check"
+            :class="{ on: item.isCompleted }"
+            title="标记完成"
+            @click.stop="toggleComplete(item)"
+          >
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff"
+                 stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </button>
 
-          <div class="rail"><i class="dot" :style="{ background: item.color }" /></div>
-
-          <div class="tl-card" :class="{ done: item.isCompleted }" :style="{ '--c': item.color }">
+          <div class="task-main">
             <div class="row1">
-              <button
-                class="check"
-                :class="{ on: item.isCompleted }"
-                title="标记完成"
-                @click.stop="toggleComplete(item)"
-              >
-                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff"
-                     stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </button>
               <span class="title">{{ item.title }}</span>
-              <span class="prio" :style="{ color: PRIO[item.priority].color }">
-                <i :style="{ background: PRIO[item.priority].color }" />{{ PRIO[item.priority].text }}
-              </span>
-              <button class="del" @click.stop="remove(item)">删除</button>
+              <span
+                v-if="item.priority === 'urgent' || item.priority === 'high'"
+                class="prio"
+                :style="{ color: PRIO[item.priority].color }"
+              ><i :style="{ background: PRIO[item.priority].color }" />{{ PRIO[item.priority].text }}</span>
             </div>
 
-            <p v-if="item.description" class="desc">{{ item.description }}</p>
-
             <div class="meta">
-              <span v-for="t in item.tags" :key="t" class="chip">{{ t }}</span>
+              <span class="meta-item time">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+                <template v-if="item.isAllDay">全天</template>
+                <template v-else>{{ timeHM(item.startTime) }} - {{ timeHM(item.endTime) }}</template>
+              </span>
               <span v-if="item.location" class="meta-item">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -237,22 +294,35 @@ onMounted(load);
                 </svg>
                 {{ item.contact }}
               </span>
+              <span v-for="t in item.tags" :key="t" class="chip">{{ t }}</span>
             </div>
+
+            <p v-if="item.description" class="desc">{{ item.description }}</p>
           </div>
+
+          <button class="del" @click.stop="remove(item)">删除</button>
         </article>
       </div>
 
       <!-- 空状态：克制、有引导 -->
       <div v-if="!loading && schedules.length === 0" class="empty">
-        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#c9d0dc"
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#bfd3cf"
              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="9" />
           <path d="M12 7v5l3 2" />
         </svg>
         <p class="empty-t">还没有任何安排</p>
-        <p class="empty-s">点击右上角「新建日程」，或在左侧粘贴一段文字让 AI 帮你排期</p>
+        <p class="empty-s">点击右下角 ＋ 新建日程，或在左侧粘贴一段文字让 AI 帮你归档</p>
       </div>
     </div>
+
+    <!-- 悬浮新建按钮 -->
+    <button class="fab" title="新建日程" @click="openCreate">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff"
+           stroke-width="2.4" stroke-linecap="round">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    </button>
 
     <!-- 新建日程 -->
     <el-dialog v-model="dlg" title="新建日程" width="460px">
@@ -288,49 +358,98 @@ onMounted(load);
 </template>
 
 <style scoped>
-/* ---------- 面板头 ---------- */
-.head {
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---------- 头图 ---------- */
+.hero {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--cf-line);
-}
-.head-titles h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-.stat {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--cf-text-3);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.bar {
-  width: 64px;
-  height: 4px;
-  border-radius: 2px;
-  background: #edf0f5;
+  gap: 16px;
+  padding: 18px 20px 16px;
+  background: linear-gradient(118deg, #14a396 0%, #0b857c 100%);
+  color: #fff;
   overflow: hidden;
-  display: inline-block;
-}
-.bar i {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--cf-accent);
-  transition: width 0.3s;
 }
 
-/* ---------- 时间轴 ---------- */
+.hero-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hero-title h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.hero-date {
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 2px 9px;
+  border-radius: 7px;
+}
+.hero-sub {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.hero-right {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.spark {
+  width: 118px;
+  height: 36px;
+  overflow: visible;
+}
+.hero-pct {
+  text-align: right;
+}
+.hero-pct b {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.hero-pct b i {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 1px;
+}
+.hero-pct span {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.hero-wave {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 58%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ---------- 列表 ---------- */
 .tl-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 18px 20px;
+  padding: 16px 18px 88px;
 }
 .day-group {
   margin-bottom: 20px;
@@ -339,103 +458,64 @@ onMounted(load);
   margin-bottom: 0;
 }
 .day-label {
+  display: inline-flex;
+  align-items: center;
   font-size: 12px;
   font-weight: 600;
-  color: var(--cf-text-2);
+  color: var(--cf-accent);
+  background: var(--cf-accent-soft);
+  padding: 3px 10px;
+  border-radius: 8px;
   margin-bottom: 10px;
 }
 .day-count {
-  margin-left: 8px;
+  margin-left: 7px;
   font-weight: 400;
   color: var(--cf-text-3);
 }
 
-.tl-item {
-  display: grid;
-  grid-template-columns: 46px 18px 1fr;
-  gap: 0 8px;
-}
-.tl-item + .tl-item {
-  margin-top: 10px;
-}
-
-.tl-time {
-  text-align: right;
-  padding-top: 10px;
-  display: flex;
-  flex-direction: column;
-  font-variant-numeric: tabular-nums;
-}
-.tl-time b {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--cf-text);
-}
-.tl-time i {
-  font-style: normal;
-  font-size: 11px;
-  color: var(--cf-text-3);
-}
-
-/* 轨道：竖线 + 色点 */
-.rail {
+/* 任务行：白卡片 */
+.task {
   position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 11px 14px;
+  box-shadow: 0 1px 2px rgba(23, 43, 40, 0.06);
+  transition: box-shadow 0.15s;
+  overflow: hidden;
 }
-.rail::before {
+.task + .task {
+  margin-top: 9px;
+}
+.task:hover {
+  box-shadow: 0 4px 14px rgba(23, 43, 40, 0.1);
+}
+/* 紧急/高优先级：左侧色条 */
+.task::before {
   content: '';
   position: absolute;
-  left: 50%;
+  left: 0;
   top: 0;
   bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: #eef1f5;
+  width: 3px;
+  background: var(--c);
 }
-.tl-item:first-child .rail::before {
-  top: 18px;
-}
-.tl-item:last-child .rail::before {
-  bottom: calc(100% - 18px);
-}
-.dot {
-  position: absolute;
-  left: 50%;
-  top: 18px;
-  width: 9px;
-  height: 9px;
-  margin: -4.5px 0 0 -4.5px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px rgba(31, 36, 48, 0.08);
-  z-index: 1;
+.task:not(.bar)::before {
+  display: none;
 }
 
-/* 卡片 */
-.tl-card {
-  border: 1px solid #e9edf3;
-  border-left: 3px solid var(--c);
-  border-radius: 10px;
-  background: #fbfcfe;
-  padding: 10px 12px;
-  transition: box-shadow 0.15s, border-color 0.15s;
-}
-.tl-card:hover {
-  border-color: #dde3ec;
-  box-shadow: 0 2px 10px rgba(31, 41, 55, 0.06);
-}
-
-.row1 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* 圆角方形勾选框 */
 .check {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   flex: none;
-  border-radius: 50%;
-  border: 1.5px solid #cfd6e0;
-  background: transparent;
+  margin-top: 2px;
+  border-radius: 5px;
+  border: 1.5px solid #c3d4d0;
+  background: #fff;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -449,6 +529,16 @@ onMounted(load);
 .check.on {
   background: var(--cf-accent);
   border-color: var(--cf-accent);
+}
+
+.task-main {
+  flex: 1;
+  min-width: 0;
+}
+.row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .title {
   font-size: 14px;
@@ -464,33 +554,42 @@ onMounted(load);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
 }
 .prio i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
 }
-.del {
-  flex: none;
-  border: none;
-  background: none;
+
+/* 元信息：时间用主色，其余灰 */
+.meta {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--cf-text-3);
-  cursor: pointer;
-  opacity: 0;
-  padding: 2px 4px;
-  transition: opacity 0.15s, color 0.15s;
 }
-.tl-item:hover .del {
-  opacity: 1;
+.meta-item.time {
+  color: var(--cf-accent);
+  font-weight: 500;
 }
-.del:hover {
-  color: var(--cf-danger);
+.chip {
+  font-size: 11px;
+  color: #5d6678;
+  background: #f0f2f7;
+  padding: 1px 8px;
+  border-radius: 6px;
 }
-
 .desc {
-  margin: 6px 0 0 26px;
+  margin: 6px 0 0;
   font-size: 12px;
   color: var(--cf-text-2);
   line-height: 1.6;
@@ -500,40 +599,64 @@ onMounted(load);
   overflow: hidden;
 }
 
-.meta {
-  margin: 7px 0 0 26px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-}
-.chip {
-  font-size: 11px;
-  color: #5d6678;
-  background: #f0f2f7;
-  padding: 1px 8px;
-  border-radius: 6px;
-}
-.meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.del {
+  flex: none;
+  border: none;
+  background: none;
   font-size: 12px;
   color: var(--cf-text-3);
+  cursor: pointer;
+  opacity: 0;
+  padding: 2px 0 2px 6px;
+  margin-top: 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.task:hover .del {
+  opacity: 1;
+}
+.del:hover {
+  color: var(--cf-danger);
 }
 
 /* 已完成态 */
-.tl-card.done {
-  opacity: 0.6;
+.task.done {
+  opacity: 0.55;
 }
-.tl-card.done .title {
+.task.done .title {
   text-decoration: line-through;
   text-decoration-color: rgba(102, 112, 138, 0.6);
 }
 
+/* ---------- FAB ---------- */
+.fab {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #14a396, #0b857c);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 20px rgba(13, 148, 136, 0.38);
+  transition: transform 0.15s, box-shadow 0.15s;
+  z-index: 2;
+}
+.fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(13, 148, 136, 0.46);
+}
+.fab:active {
+  transform: translateY(0);
+}
+
 /* ---------- 空状态 ---------- */
 .empty {
-  padding: 60px 0 70px;
+  padding: 56px 0 64px;
   text-align: center;
 }
 .empty-t {
