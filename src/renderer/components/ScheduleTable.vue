@@ -1,792 +1,561 @@
 <script setup lang="ts">
 /**
- * 日程主视图 —— 清单卡片样式（Task 3）
+ * 日程表主视图（P3 实现）
  *
- * 功能：
- * - 顶部文本输入 + 「生成日程」：调 extractHighlights → emit('open-highlight', {...})
- * - 任务行：圆角方形勾选框 + 彩色元信息，紧急/高优先级左侧色条
- * - 新建 / 编辑（点击行）弹窗，字段齐全（含颜色 color-picker）
- * - 删除二次确认、完成勾选、挂载自动加载
- *
- * 视觉：马尔斯绿主色头图 + 近 7 天日程量曲线 + 完成度 + 悬浮 FAB
+ *   - 表格展示日程（时间 / 标题 / 优先级 / 标签 / 颜色 / 地点 / 联系人 / 完成状态）
+ *   - 新增 / 编辑日程 → 弹窗表单
+ *   - 删除日程 → 二次确认弹窗
+ *   - 勾选完成 → 更新 isCompleted，标题划线
+ *   - 粘贴文本 → genTableFromText / extractHighlights → 弹出划重点预览
  */
-import { ref, reactive, computed, onMounted } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import type { Priority, ScheduleInput, ScheduleItem } from '../../shared/types';
 import { useAppApi } from '../hooks/useAppApi';
-import type {
-  ScheduleItem,
-  Priority,
-  ExtractHighlightsRes,
-} from '../../shared/types';
+import { useScheduleStore } from '../hooks/useScheduleStore';
+import { PRIORITY_META, PRIORITY_OPTIONS, formatScheduleRange } from '../utils/format';
 
 const api = useAppApi();
+const store = useScheduleStore();
+const { state } = store;
 
-/* ---------- 事件：划重点预览 ---------- */
-const emit = defineEmits<{
-  (e: 'open-highlight', payload: ExtractHighlightsRes): void;
-}>();
+/** el-table 插槽的 row 为 any，统一走这里取优先级展示元数据 */
+function priorityMeta(p: Priority) {
+  return PRIORITY_META[p] ?? PRIORITY_META.medium;
+}
 
-const schedules = ref<ScheduleItem[]>([]);
-const loading = ref(false);
-
-/* ---------- 优先级映射 ---------- */
-const PRIO: Record<Priority, { text: string; color: string; tag: string }> = {
-  urgent: { text: '紧急', color: '#f54a45', tag: 'danger' },
-  high: { text: '高', color: '#ff8f1f', tag: 'warning' },
-  medium: { text: '中', color: '#0d9488', tag: 'primary' },
-  low: { text: '低', color: '#a2a9b8', tag: 'info' },
-};
-const prioKeys = Object.keys(PRIO) as Priority[];
-
-/* ---------- 统计 ---------- */
-const total = computed(() => schedules.value.length);
-const doneCount = computed(() => schedules.value.filter(s => s.isCompleted).length);
-const pctNum = computed(() =>
-  total.value ? Math.round((doneCount.value / total.value) * 100) : 0
-);
-
-/* ---------- 头图：日期徽章 + 近 7 天曲线 ---------- */
-const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const pad = (n: number) => String(n).padStart(2, '0');
-
-const _now = new Date();
-const dateBadge = `${_now.getMonth() + 1}月${_now.getDate()}日 ${WEEK[_now.getDay()]}`;
-
-const sparkPath = computed(() => {
-  const days = 7;
-  const base = new Date();
-  base.setHours(0, 0, 0, 0);
-  const counts: number[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(base.getTime() - i * 86400000);
-    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    counts.push(schedules.value.filter(s => s.startTime.slice(0, 10) === key).length);
-  }
-  const max = Math.max(...counts, 1);
-  const W = 120, H = 36, P = 4;
-  const pts = counts.map((v, i) => [
-    P + (i * (W - P * 2)) / (days - 1),
-    H - P - (v / max) * (H - P * 2),
-  ] as [number, number]);
-  if (!pts.length) return '';
-  let d = `M ${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 1; i < pts.length; i++) {
-    const [x0, y0] = pts[i - 1];
-    const [x1, y1] = pts[i];
-    const mx = (x0 + x1) / 2;
-    d += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
-  }
-  return d;
+onMounted(() => {
+  store.refresh();
 });
 
-/* ---------- 按天分组 ---------- */
-function dayLabel(key: string): string {
-  const [y, m, d] = key.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = Math.round((date.getTime() - today.getTime()) / 86400000);
-  const base = `${m}月${d}日 ${WEEK[date.getDay()]}`;
-  if (diff === 0) return `今天 · ${base}`;
-  if (diff === 1) return `明天 · ${base}`;
-  if (diff === -1) return `昨天 · ${base}`;
-  return base;
-}
-
-interface DayGroup {
-  key: string;
-  label: string;
-  items: ScheduleItem[];
-}
-
-const groups = computed<DayGroup[]>(() => {
-  const sorted = [...schedules.value].sort((a, b) =>
-    a.startTime.localeCompare(b.startTime)
-  );
-  const map = new Map<string, ScheduleItem[]>();
-  for (const s of sorted) {
-    const key = s.startTime.slice(0, 10);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(s);
-  }
-  return Array.from(map.entries()).map(([key, items]) => ({
-    key,
-    label: dayLabel(key),
-    items: items.sort(
-      (a, b) =>
-        Number(b.isAllDay) - Number(a.isAllDay) ||
-        a.startTime.localeCompare(b.startTime)
-    ),
-  }));
-});
-
-function timeHM(iso: string): string {
-  return iso.slice(11, 16);
-}
-
-/* ---------- 数据加载与操作 ---------- */
-async function load() {
-  loading.value = true;
-  try {
-    const res = await api.query({});
-    // 浅拷贝：mock 的 query 每次返回同一数组引用，
-    // 直接赋值会因 Object.is 相等被 Vue 跳过更新，导致列表不刷新
-    schedules.value = [...res.items];
-  } catch {
-    // 错误提示已在 useAppApi 统一弹出
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function toggleComplete(item: ScheduleItem) {
-  await api.update({ ...item, isCompleted: !item.isCompleted });
-  await load();
-}
-
-async function remove(item: ScheduleItem) {
-  try {
-    await ElMessageBox.confirm(`确定删除「${item.title}」吗？`, '删除确认', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-    });
-  } catch {
-    return;
-  }
-  await api.delete(item.id);
-  ElMessage.success('已删除');
-  await load();
-}
-
-/* ---------- 顶部文本生成日程 ---------- */
-const genText = ref('');
+// ==================== 文本 → 日程 ====================
+const pasteText = ref('');
 const generating = ref(false);
+const extracting = ref(false);
 
-async function generate() {
-  const text = genText.value.trim();
+function readPasteText(): string | null {
+  const text = pasteText.value.trim();
   if (!text) {
-    ElMessage.warning('先粘贴一段日程文字');
-    return;
+    ElMessage.warning('请先粘贴一段待整理的文本');
+    return null;
   }
+  return text;
+}
+
+/** 智能生成时间表：文字 → 结构化日程（走 genTableFromText） */
+async function handleGenerate() {
+  const text = readPasteText();
+  if (!text) return;
   generating.value = true;
   try {
-    const res = await api.extractHighlights({ text });
-    emit('open-highlight', res);
+    const res = await api.genTableFromText({
+      text,
+      baseDate: new Date().toISOString(),
+      timezone: 'Asia/Shanghai',
+    });
+    store.openPreview({
+      kind: 'generate',
+      title: '智能生成时间表',
+      sourceText: text,
+      fullText: text,
+      highlights: [],
+      draftSchedules: res.scheduleItems ?? [],
+      explanation: res.explanation,
+      conflicts: res.conflicts ?? [],
+    });
   } catch {
-    // 错误提示已在 useAppApi 统一弹出
+    /* useAppApi 已提示 */
   } finally {
     generating.value = false;
   }
 }
 
-/* ---------- 新建 / 编辑日程 ---------- */
-const dlg = ref(false);
-const editingId = ref<string | null>(null);
+/** 文本划重点：抽取 HighlightSegment + 日程草稿（走 extractHighlights） */
+async function handleExtract() {
+  const text = readPasteText();
+  if (!text) return;
+  extracting.value = true;
+  try {
+    const res = await api.extractHighlights({ text });
+    store.openPreview({
+      kind: 'highlight',
+      title: '文本划重点',
+      sourceText: text,
+      fullText: res.fullText || text,
+      highlights: res.highlights ?? [],
+      draftSchedules: res.draftSchedules ?? [],
+    });
+  } catch {
+    /* useAppApi 已提示 */
+  } finally {
+    extracting.value = false;
+  }
+}
+
+// ==================== 新增 / 编辑 ====================
+const dialogVisible = ref(false);
+const submitting = ref(false);
+const editingBase = ref<ScheduleItem | null>(null);
+
 const form = reactive({
   title: '',
   description: '',
-  range: null as [string, string] | null,
+  timeRange: [] as string[],
   isAllDay: false,
   priority: 'medium' as Priority,
-  tagsText: '',
-  color: '#0d9488',
+  tags: [] as string[],
+  color: '#4f8cff',
   location: '',
   contact: '',
 });
 
-function fmtISO(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+const dialogTitle = computed(() => (editingBase.value ? '编辑日程' : '新增日程'));
+
+const rules = {
+  title: [{ required: true, message: '请填写标题', trigger: 'blur' }],
+  timeRange: [{ required: true, message: '请选择开始 / 结束时间', trigger: 'change' }],
+};
+
+function resetForm() {
+  form.title = '';
+  form.description = '';
+  form.timeRange = [];
+  form.isAllDay = false;
+  form.priority = 'medium';
+  form.tags = [];
+  form.color = '#4f8cff';
+  form.location = '';
+  form.contact = '';
 }
 
 function openCreate() {
-  const s = new Date();
-  s.setMinutes(0, 0, 0);
-  s.setHours(s.getHours() + 1);
-  editingId.value = null;
-  form.title = '';
-  form.description = '';
-  form.range = [fmtISO(s), fmtISO(new Date(s.getTime() + 3600000))];
-  form.isAllDay = false;
-  form.priority = 'medium';
-  form.tagsText = '';
-  form.color = '#0d9488';
-  form.location = '';
-  form.contact = '';
-  dlg.value = true;
+  editingBase.value = null;
+  resetForm();
+  dialogVisible.value = true;
 }
 
-function openEdit(item: ScheduleItem) {
-  editingId.value = item.id;
-  form.title = item.title;
-  form.description = item.description;
-  form.range = [item.startTime, item.endTime];
-  form.isAllDay = item.isAllDay;
-  form.priority = item.priority;
-  form.tagsText = item.tags.join('，');
-  form.color = item.color || '#0d9488';
-  form.location = item.location;
-  form.contact = item.contact;
-  dlg.value = true;
+function openEdit(row: ScheduleItem) {
+  editingBase.value = row;
+  form.title = row.title;
+  form.description = row.description;
+  form.timeRange = [row.startTime.slice(0, 19), row.endTime.slice(0, 19)];
+  form.isAllDay = row.isAllDay;
+  form.priority = row.priority;
+  form.tags = [...row.tags];
+  form.color = row.color;
+  form.location = row.location;
+  form.contact = row.contact;
+  dialogVisible.value = true;
 }
 
-function splitTags(s: string): string[] {
-  return s
-    .split(/[,，、\s]+/)
-    .map(t => t.trim())
-    .filter(Boolean);
-}
-
-async function submit() {
+async function handleSubmit() {
   if (!form.title.trim()) {
     ElMessage.warning('请填写标题');
     return;
   }
-  if (!form.range || form.range.length < 2) {
-    ElMessage.warning('请选择时间');
+  if (!form.timeRange || form.timeRange.length !== 2) {
+    ElMessage.warning('请选择开始 / 结束时间');
     return;
   }
-  if (form.range[1] < form.range[0]) {
-    ElMessage.warning('结束时间不能早于开始时间');
-    return;
-  }
-  const input = {
+
+  const input: ScheduleInput = {
     title: form.title.trim(),
     description: form.description.trim(),
-    startTime: form.range[0],
-    endTime: form.range[1],
+    startTime: form.timeRange[0],
+    endTime: form.timeRange[1],
     isAllDay: form.isAllDay,
     priority: form.priority,
-    tags: splitTags(form.tagsText),
+    tags: form.tags,
     color: form.color,
     location: form.location.trim(),
     contact: form.contact.trim(),
   };
 
-  if (editingId.value) {
-    // 编辑：合并回完整实体（update 契约要求 ScheduleItem）
-    const origin = schedules.value.find(s => s.id === editingId.value);
-    if (!origin) {
-      ElMessage.error('找不到原日程');
-      return;
+  submitting.value = true;
+  try {
+    if (editingBase.value) {
+      const payload: ScheduleItem = {
+        ...editingBase.value,
+        title: input.title,
+        description: input.description,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        isAllDay: input.isAllDay ?? false,
+        priority: input.priority ?? 'medium',
+        tags: input.tags ?? [],
+        color: input.color ?? '#4f8cff',
+        location: input.location ?? '',
+        contact: input.contact ?? '',
+      };
+      await store.updateSchedule(payload);
+      ElMessage.success('日程已更新');
+    } else {
+      await store.createSchedule(input);
+      ElMessage.success('日程已创建');
     }
-    await api.update({ ...origin, ...input });
-    ElMessage.success('已保存修改');
-  } else {
-    await api.create(input);
-    ElMessage.success('已添加到日程');
+    dialogVisible.value = false;
+  } finally {
+    submitting.value = false;
   }
-  dlg.value = false;
-  await load();
 }
 
-onMounted(load);
+// ==================== 删除 / 完成 ====================
+async function handleDelete(row: ScheduleItem) {
+  try {
+    await ElMessageBox.confirm(`确定删除日程「${row.title}」吗？该操作不可撤销。`, '删除确认', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    });
+  } catch {
+    return;
+  }
+  const ok = await store.deleteSchedule(row.id);
+  if (ok) ElMessage.success('已删除');
+}
 
-/* 暴露给父组件：导入日程后刷新 */
-defineExpose({ load });
+async function handleToggleComplete(row: ScheduleItem) {
+  await store.toggleComplete(row);
+}
 </script>
 
 <template>
-  <section class="panel">
-    <!-- 头图：主色块 + 统计 -->
-    <header class="hero">
-      <div class="hero-main">
-        <div class="hero-title">
-          <h2>日程安排</h2>
-          <span class="hero-date">{{ dateBadge }}</span>
-        </div>
-        <p class="hero-sub">
-          <template v-if="total">共 {{ total }} 项 · 已完成 {{ doneCount }} · 待办 {{ total - doneCount }}</template>
-          <template v-else>把要做的事安排进来</template>
-        </p>
+  <div class="schedule-table">
+    <header class="table-head">
+      <div class="head-text">
+        <h2>我的日程表</h2>
+        <p>共 {{ state.schedules.length }} 条日程，点标题前勾选框可标记完成</p>
       </div>
-
-      <div class="hero-right">
-        <svg class="spark" viewBox="0 0 120 36">
-          <path :d="sparkPath" fill="none" stroke="rgba(255,255,255,0.9)"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <div class="hero-pct">
-          <b>{{ pctNum }}<i>%</i></b>
-          <span>完成度</span>
-        </div>
-      </div>
-
-      <svg class="hero-wave" viewBox="0 0 400 80" preserveAspectRatio="none">
-        <path d="M0 62 C 70 22, 150 88, 230 48 S 350 28, 400 56 L 400 80 L 0 80 Z"
-              fill="rgba(255,255,255,0.10)" />
-        <path d="M0 72 C 90 40, 180 92, 260 62 S 360 46, 400 68 L 400 80 L 0 80 Z"
-              fill="rgba(255,255,255,0.08)" />
-      </svg>
+      <el-button type="primary" @click="openCreate">＋ 新增日程</el-button>
     </header>
 
-    <!-- 顶部：文本生成日程 -->
-    <div class="generator">
+    <!-- 粘贴文本 → 智能生成 / 划重点 -->
+    <section class="paste-zone">
       <el-input
-        v-model="genText"
+        v-model="pasteText"
         type="textarea"
-        :autosize="{ minRows: 2, maxRows: 4 }"
-        placeholder="粘贴一段文字，AI 帮你识别成日程，例如：下周五上午 10 点在 3F 会议室评审产品路线图…"
+        :rows="3"
+        resize="none"
+        placeholder="把零散的日程信息粘进来，例如：下周五上午 10:00-11:30 在 3F 会议室 A 评审 Q4 产品路线图；10 月 8 号前务必把 Q3 述职交了……"
       />
-      <el-button type="primary" class="gen-btn" :loading="generating" @click="generate">
-        生成日程
-      </el-button>
-    </div>
+      <div class="paste-actions">
+        <span class="paste-hint">支持一段话里包含多件事，自动拆分成多条日程</span>
+        <div class="paste-buttons">
+          <el-button :loading="extracting" @click="handleExtract">✎ 划重点</el-button>
+          <el-button type="primary" :loading="generating" @click="handleGenerate">⚡ 智能生成时间表</el-button>
+        </div>
+      </div>
+    </section>
 
-    <div class="tl-scroll" v-loading="loading">
-      <div v-for="g in groups" :key="g.key" class="day-group">
-        <div class="day-label">{{ g.label }}<span class="day-count">{{ g.items.length }} 项</span></div>
+    <!-- 过滤 -->
+    <section class="filter-bar">
+      <el-input
+        v-model="state.query.keyword"
+        class="filter-keyword"
+        placeholder="搜索标题 / 描述"
+        clearable
+        @keyup.enter="store.refresh()"
+        @clear="store.refresh()"
+      />
+      <el-select
+        v-model="state.query.priority"
+        class="filter-priority"
+        placeholder="全部优先级"
+        clearable
+        @change="store.refresh()"
+      >
+        <el-option v-for="opt in PRIORITY_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+      </el-select>
+      <el-checkbox v-model="state.query.onlyUncompleted" @change="store.refresh()">仅看未完成</el-checkbox>
+      <el-button link type="primary" @click="store.refresh()">刷新</el-button>
+    </section>
 
-        <article
-          v-for="item in g.items"
-          :key="item.id"
-          class="task"
-          :class="{ done: item.isCompleted, bar: item.priority === 'urgent' || item.priority === 'high' }"
-          :style="{ '--c': PRIO[item.priority].color }"
-          @click="openEdit(item)"
-        >
-          <button
-            class="check"
-            :class="{ on: item.isCompleted }"
-            title="标记完成"
-            @click.stop="toggleComplete(item)"
-          >
-            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff"
-                 stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-          </button>
+    <!-- 表格 -->
+    <section class="table-wrap">
+      <el-table
+        v-loading="state.loading"
+        :data="state.schedules"
+        row-key="id"
+        height="100%"
+        :header-cell-style="{ background: '#f5f7fb', color: '#5d6b7f', fontWeight: 600 }"
+      >
+        <el-table-column width="52" align="center">
+          <template #header>
+            <span class="col-done">完成</span>
+          </template>
+          <template #default="{ row }">
+            <el-checkbox
+              :model-value="row.isCompleted"
+              @change="() => handleToggleComplete(row)"
+            />
+          </template>
+        </el-table-column>
 
-          <div class="task-main">
-            <div class="row1">
-              <span class="color-chip" :style="{ background: item.color }" />
-              <span class="title">{{ item.title }}</span>
-              <el-tag size="small" :type="PRIO[item.priority].tag as any" effect="light" disable-transitions>
-                {{ PRIO[item.priority].text }}
+        <el-table-column label="时间" width="230">
+          <template #default="{ row }">
+            <span class="cell-time">{{ formatScheduleRange(row) }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="标题" min-width="260">
+          <template #default="{ row }">
+            <div class="cell-title-wrap">
+              <span class="color-dot" :style="{ background: row.color }" />
+              <div class="cell-title-body">
+                <div class="cell-title" :class="{ 'is-done': row.isCompleted }">
+                  {{ row.title }}
+                  <el-tag v-if="row.isAllDay" size="small" effect="plain" type="success" round>全天</el-tag>
+                </div>
+                <div v-if="row.description" class="cell-desc">{{ row.description }}</div>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="优先级" width="96" align="center">
+          <template #default="{ row }">
+            <el-tag :type="priorityMeta(row.priority).tag" size="small" effect="light" round>
+              {{ priorityMeta(row.priority).label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="标签" min-width="140">
+          <template #default="{ row }">
+            <template v-if="row.tags?.length">
+              <el-tag v-for="tag in row.tags" :key="tag" size="small" effect="plain" class="tag-item">
+                {{ tag }}
               </el-tag>
-            </div>
+            </template>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
 
-            <div class="meta">
-              <span class="meta-item time">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v5l3 2" />
-                </svg>
-                <template v-if="item.isAllDay">全天</template>
-                <template v-else>{{ timeHM(item.startTime) }} - {{ timeHM(item.endTime) }}</template>
-              </span>
-              <span v-if="item.location" class="meta-item">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-                  <circle cx="12" cy="10" r="3" />
-                </svg>
-                {{ item.location }}
-              </span>
-              <span v-if="item.contact" class="meta-item">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-                {{ item.contact }}
-              </span>
-              <span v-for="t in item.tags" :key="t" class="chip">{{ t }}</span>
-            </div>
+        <el-table-column label="地点 / 联系人" min-width="150">
+          <template #default="{ row }">
+            <div v-if="row.location" class="meta-line">📍 {{ row.location }}</div>
+            <div v-if="row.contact" class="meta-line">👤 {{ row.contact }}</div>
+            <span v-if="!row.location && !row.contact" class="muted">—</span>
+          </template>
+        </el-table-column>
 
-            <p v-if="item.description" class="desc">{{ item.description }}</p>
-          </div>
+        <el-table-column label="操作" width="132" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
 
-          <button class="del" title="删除" @click.stop="remove(item)">删除</button>
-        </article>
-      </div>
+        <template #empty>
+          <el-empty description="暂无日程，粘贴一段文本试试智能生成" :image-size="80" />
+        </template>
+      </el-table>
+    </section>
 
-      <!-- 空状态 -->
-      <div v-if="!loading && schedules.length === 0" class="empty">
-        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#bfd3cf"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3 2" />
-        </svg>
-        <p class="empty-t">还没有任何安排</p>
-        <p class="empty-s">在上方粘贴一段文字生成日程，或点击右下角 ＋ 手动新建</p>
-      </div>
-    </div>
-
-    <!-- 悬浮新建按钮 -->
-    <button class="fab" title="新建日程" @click="openCreate">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff"
-           stroke-width="2.4" stroke-linecap="round">
-        <path d="M12 5v14M5 12h14" />
-      </svg>
-    </button>
-
-    <!-- 新建 / 编辑日程 -->
-    <el-dialog v-model="dlg" :title="editingId ? '编辑日程' : '新建日程'" width="520px">
-      <el-form label-width="72px" label-position="left">
-        <el-form-item label="标题">
-          <el-input v-model="form.title" placeholder="例如：周五下午 产品评审会" maxlength="50" />
+    <!-- 新增 / 编辑弹窗 -->
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="560px" :close-on-click-modal="false">
+      <el-form :model="form" :rules="rules" label-width="88px" label-position="right">
+        <el-form-item label="标题" prop="title">
+          <el-input v-model="form.title" maxlength="60" show-word-limit placeholder="请输入日程标题" />
         </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="可选" maxlength="200" />
-        </el-form-item>
-        <el-form-item label="时间">
+
+        <el-form-item label="时间" prop="timeRange">
           <el-date-picker
-            v-model="form.range"
+            v-model="form.timeRange"
             type="datetimerange"
             value-format="YYYY-MM-DDTHH:mm:ss"
-            start-placeholder="开始"
-            end-placeholder="结束"
-            :disabled="form.isAllDay"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            range-separator="至"
             style="width: 100%"
           />
         </el-form-item>
+
         <el-form-item label="全天">
           <el-switch v-model="form.isAllDay" />
         </el-form-item>
+
         <el-form-item label="优先级">
-          <el-select v-model="form.priority" style="width: 100%">
-            <el-option v-for="k in prioKeys" :key="k" :value="k" :label="PRIO[k].text" />
+          <el-radio-group v-model="form.priority">
+            <el-radio-button v-for="opt in PRIORITY_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item label="标签">
+          <el-select
+            v-model="form.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            :reserve-keyword="false"
+            placeholder="回车创建标签"
+            style="width: 100%"
+          >
+            <el-option v-for="tag in form.tags" :key="tag" :label="tag" :value="tag" />
           </el-select>
         </el-form-item>
-        <el-form-item label="标签">
-          <el-input v-model="form.tagsText" placeholder="用逗号/空格分隔，如：工作, 重要" maxlength="100" />
-        </el-form-item>
+
         <el-form-item label="颜色">
           <el-color-picker v-model="form.color" />
         </el-form-item>
+
         <el-form-item label="地点">
-          <el-input v-model="form.location" placeholder="可选" maxlength="50" />
+          <el-input v-model="form.location" placeholder="如：3F 会议室 A" />
         </el-form-item>
+
         <el-form-item label="联系人">
-          <el-input v-model="form.contact" placeholder="可选" maxlength="50" />
+          <el-input v-model="form.contact" placeholder="如：王经理" />
+        </el-form-item>
+
+        <el-form-item label="描述">
+          <el-input v-model="form.description" type="textarea" :rows="3" maxlength="200" show-word-limit />
         </el-form-item>
       </el-form>
+
       <template #footer>
-        <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" @click="submit">{{ editingId ? '保存' : '创建' }}</el-button>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
       </template>
     </el-dialog>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.panel {
-  position: relative;
+.schedule-table {
   display: flex;
   flex-direction: column;
   height: 100%;
-  min-height: 0;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #e8ecf3;
+  overflow: hidden;
 }
 
-/* ---------- 头图 ---------- */
-.hero {
-  position: relative;
-  flex: none;
+.table-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.head-text h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2933;
+}
+.head-text p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #8c98a8;
+}
+
+.paste-zone {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f7f9fd;
+  border: 1px dashed #dbe3f0;
+}
+.paste-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 18px 20px 16px;
-  background: linear-gradient(118deg, #14a396 0%, #0b857c 100%);
-  color: #fff;
-  overflow: hidden;
-}
-.hero-title {
-  display: flex;
-  align-items: center;
   gap: 10px;
+  margin-top: 10px;
 }
-.hero-title h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-}
-.hero-date {
+.paste-hint {
   font-size: 12px;
-  background: rgba(255, 255, 255, 0.18);
-  padding: 2px 9px;
-  border-radius: 7px;
+  color: #98a4b6;
 }
-.hero-sub {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.82);
+.paste-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.hero-right {
-  position: relative;
-  z-index: 1;
+
+.filter-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  margin: 14px 0 10px;
 }
-.spark {
-  width: 118px;
-  height: 36px;
-  overflow: visible;
+.filter-keyword {
+  width: 240px;
 }
-.hero-pct {
-  text-align: right;
-}
-.hero-pct b {
-  font-size: 22px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.hero-pct b i {
-  font-style: normal;
-  font-size: 12px;
-  font-weight: 500;
-  margin-left: 1px;
-}
-.hero-pct span {
-  display: block;
-  margin-top: 1px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.75);
-}
-.hero-wave {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 58%;
-  height: 100%;
-  pointer-events: none;
+.filter-priority {
+  width: 140px;
 }
 
-/* ---------- 生成区 ---------- */
-.generator {
-  flex: none;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--cf-line);
-}
-.generator :deep(.el-textarea) {
+.table-wrap {
   flex: 1;
-}
-.gen-btn {
-  flex: none;
-  margin-top: 2px;
+  min-height: 200px;
 }
 
-/* ---------- 列表 ---------- */
-.tl-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 18px 88px;
-}
-.day-group {
-  margin-bottom: 20px;
-}
-.day-group:last-child {
-  margin-bottom: 0;
-}
-.day-label {
-  display: inline-flex;
-  align-items: center;
+.col-done {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--cf-accent);
-  background: var(--cf-accent-soft);
-  padding: 3px 10px;
-  border-radius: 8px;
-  margin-bottom: 10px;
-}
-.day-count {
-  margin-left: 7px;
-  font-weight: 400;
-  color: var(--cf-text-3);
 }
 
-/* 任务行：白卡片，点击进入编辑 */
-.task {
-  position: relative;
+.cell-time {
+  font-size: 12px;
+  color: #4a5768;
+}
+
+.cell-title-wrap {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 11px 14px;
-  box-shadow: 0 1px 2px rgba(23, 43, 40, 0.06);
-  transition: box-shadow 0.15s;
-  overflow: hidden;
-  cursor: pointer;
-}
-.task + .task {
-  margin-top: 9px;
-}
-.task:hover {
-  box-shadow: 0 4px 14px rgba(23, 43, 40, 0.1);
-}
-.task::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--c);
-}
-.task:not(.bar)::before {
-  display: none;
-}
-
-.check {
-  width: 17px;
-  height: 17px;
-  flex: none;
-  margin-top: 2px;
-  border-radius: 5px;
-  border: 1.5px solid #c3d4d0;
-  background: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  transition: all 0.15s;
-}
-.check:hover {
-  border-color: var(--cf-accent);
-}
-.check.on {
-  background: var(--cf-accent);
-  border-color: var(--cf-accent);
-}
-
-.task-main {
-  flex: 1;
-  min-width: 0;
-}
-.row1 {
-  display: flex;
-  align-items: center;
   gap: 8px;
 }
-.color-chip {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-.title {
-  font-size: 14px;
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meta {
+.color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   margin-top: 6px;
+  flex-shrink: 0;
+}
+.cell-title-body {
+  min-width: 0;
+}
+.cell-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b3646;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px 12px;
+  gap: 6px;
+  word-break: break-all;
 }
-.meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--cf-text-3);
-}
-.meta-item.time {
-  color: var(--cf-accent);
+.cell-title.is-done {
+  text-decoration: line-through;
+  color: #a6b1c2;
   font-weight: 500;
 }
-.chip {
-  font-size: 11px;
-  color: #5d6678;
-  background: #f0f2f7;
-  padding: 1px 8px;
-  border-radius: 6px;
-}
-.desc {
-  margin: 6px 0 0;
+.cell-desc {
+  margin-top: 3px;
   font-size: 12px;
-  color: var(--cf-text-2);
-  line-height: 1.6;
+  color: #98a4b6;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
-.del {
-  flex: none;
-  border: none;
-  background: none;
+.tag-item {
+  margin: 0 4px 4px 0;
+}
+.meta-line {
   font-size: 12px;
-  color: var(--cf-text-3);
-  cursor: pointer;
-  opacity: 0;
-  padding: 2px 0 2px 6px;
-  margin-top: 2px;
-  transition: opacity 0.15s, color 0.15s;
+  color: #5d6b7f;
+  line-height: 1.6;
 }
-.task:hover .del {
-  opacity: 1;
-}
-.del:hover {
-  color: var(--cf-danger);
-}
-
-.task.done {
-  opacity: 0.55;
-}
-.task.done .title {
-  text-decoration: line-through;
-  text-decoration-color: rgba(102, 112, 138, 0.6);
-}
-
-/* ---------- FAB ---------- */
-.fab {
-  position: absolute;
-  right: 22px;
-  bottom: 22px;
-  width: 46px;
-  height: 46px;
-  border: none;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #14a396, #0b857c);
-  color: #fff;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8px 20px rgba(13, 148, 136, 0.38);
-  transition: transform 0.15s, box-shadow 0.15s;
-  z-index: 2;
-}
-.fab:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(13, 148, 136, 0.46);
-}
-.fab:active {
-  transform: translateY(0);
-}
-
-/* ---------- 空状态 ---------- */
-.empty {
-  padding: 56px 0 64px;
-  text-align: center;
-}
-.empty-t {
-  margin: 14px 0 0;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--cf-text-2);
-}
-.empty-s {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--cf-text-3);
+.muted {
+  color: #c2cad6;
 }
 </style>

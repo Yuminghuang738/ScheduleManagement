@@ -1,116 +1,129 @@
 <script setup lang="ts">
 /**
- * 划重点预览弹窗（Task 4）
+ * 划重点预览弹窗（P3 实现）
  *
- * Props：visible / highlights / draftSchedules / fullText
- * Emits：close / imported
+ *   - 高亮显示原文片段（HighlightSegment）
+ *   - 显示每条片段的类型 + confidence
+ *   - 一键把 draftSchedules 转入日程表
  *
- * - 左栏(60%)：原文全文，按 highlight 的 startOffset~endOffset 高亮（六类配色）
- * - 右栏(40%)：每条 highlight → 类型标签 + 文本 + 置信度(ElProgress) + suggestion
- * - 底部「全部导入日程表」：逐条 create → ElMessage.success → emit('imported') → emit('close')
+ * 额外兼容「智能生成时间表」结果（kind === 'generate'）：展示生成说明 / 冲突警告 / 结构化表格，
+ * 复用同一个弹窗，避免 App.vue 挂载两个弹窗。
  */
-import { ref, computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { useAppApi } from '../hooks/useAppApi';
-import type { HighlightSegment, HighlightType, ScheduleItem } from '../../shared/types';
+import type { ScheduleItem } from '../../shared/types';
+import { useScheduleStore } from '../hooks/useScheduleStore';
+import {
+  PRIORITY_META,
+  buildHighlightParts,
+  formatScheduleRange,
+  highlightColor,
+  highlightLabel,
+  type HighlightPart,
+} from '../utils/format';
 
-const props = defineProps<{
-  visible: boolean;
-  highlights: HighlightSegment[];
-  draftSchedules: ScheduleItem[];
-  fullText: string;
-}>();
+const store = useScheduleStore();
+const { state } = store;
 
-const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'imported'): void;
-}>();
-
-const api = useAppApi();
 const importing = ref(false);
+const selectedKeys = ref<string[]>([]);
 
-/* ---------- 类型标签 / 高亮配色（Task4 规范，六类） ---------- */
-const TYPE_TEXT: Record<HighlightType, string> = {
-  task: '任务',
-  deadline: '截止',
-  event: '事件',
-  contact: '联系人',
-  location: '地点',
-  reminder: '提醒',
-};
-const TYPE_COLOR: Record<HighlightType, string> = {
-  task: '#dbeafe',
-  deadline: '#fee2e2',
-  event: '#d1fae5',
-  contact: '#ede9fe',
-  location: '#fff7ed',
-  reminder: '#fef9c3',
-};
+const visible = computed(() => state.preview !== null);
+const payload = computed(() => state.preview);
+const isHighlight = computed(() => payload.value?.kind === 'highlight');
 
-/* ---------- 把全文切成高亮片段（事件端点扫描，天然支持重叠） ---------- */
-interface Seg {
-  text: string;
-  type: HighlightType | null;
-}
+/** 草稿行：附上稳定的 key，便于勾选 */
+const draftRows = computed(() =>
+  (payload.value?.draftSchedules ?? []).map((item, idx) => ({
+    key: item.id || `draft_${idx}`,
+    item,
+  })),
+);
 
-const segments = computed<Seg[]>(() => {
-  const text = props.fullText || '';
-  const n = text.length;
-  if (!n) return [];
-
-  // 构建每个字符位置上的「当前高亮类型」标记（重叠时取最后命中的）
-  const typeAt: (HighlightType | null)[] = new Array(n).fill(null);
-  for (const h of props.highlights) {
-    const s = Math.max(0, Math.min(h.startOffset, n));
-    const e = Math.max(0, Math.min(h.endOffset, n));
-    for (let i = s; i < e; i++) typeAt[i] = h.type;
-  }
-
-  // 相邻同类型字符合并成一个片段
-  const out: Seg[] = [];
-  let i = 0;
-  while (i < n) {
-    const t = typeAt[i];
-    let j = i + 1;
-    while (j < n && typeAt[j] === t) j++;
-    out.push({ text: text.slice(i, j), type: t });
-    i = j;
-  }
-  return out;
+const parts = computed<HighlightPart[]>(() => {
+  if (!payload.value || payload.value.kind !== 'highlight') return [];
+  return buildHighlightParts(payload.value.fullText, payload.value.highlights);
 });
 
-/* ---------- 置信度百分比 ---------- */
-function pct(h: HighlightSegment): number {
-  return Math.round((h.confidence || 0) * 100);
+const segments = computed(() => payload.value?.highlights ?? []);
+
+// 弹窗打开时默认全选所有草稿
+watch(
+  () => state.preview,
+  (p) => {
+    selectedKeys.value = p ? p.draftSchedules.map((s, i) => s.id || `draft_${i}`) : [];
+  },
+  { immediate: true },
+);
+
+const allSelected = computed(
+  () => draftRows.value.length > 0 && selectedKeys.value.length === draftRows.value.length,
+);
+
+function toggleAll(checked: boolean) {
+  selectedKeys.value = checked ? draftRows.value.map((r) => r.key) : [];
 }
 
-/* ---------- 一键导入 ---------- */
-async function importAll() {
-  if (!props.draftSchedules.length) {
-    ElMessage.warning('没有可导入的日程');
+function toggleOne(key: string, checked: boolean) {
+  selectedKeys.value = checked
+    ? [...new Set([...selectedKeys.value, key])]
+    : selectedKeys.value.filter((k) => k !== key);
+}
+
+/** el-checkbox change 事件：值为 boolean（或 indeterminate 场景下的 'indeterminate'） */
+function onAllChange(v: unknown) {
+  toggleAll(v === true);
+}
+
+function onOneChange(key: string, v: unknown) {
+  toggleOne(key, v === true);
+}
+
+/** el-dialog 关闭时清理预览态 */
+function onDialogVisible(v: boolean) {
+  if (!v) close();
+}
+
+function partStyle(part: HighlightPart) {
+  if (!part.type) return {};
+  const color = highlightColor(part.type);
+  return {
+    background: `${color}22`,
+    borderBottom: `2px solid ${color}`,
+    color: '#2b3646',
+  };
+}
+
+function partTitle(part: HighlightPart): string | undefined {
+  if (!part.type) return undefined;
+  return `${highlightLabel(part.type)} · 置信度 ${Math.round((part.confidence ?? 0) * 100)}%`;
+}
+
+function confidencePct(v: number): number {
+  return Math.max(0, Math.min(100, Math.round(v * 100)));
+}
+
+const legendTypes = computed(() => {
+  const set = new Set(segments.value.map((s) => s.type));
+  return [...set];
+});
+
+function close() {
+  store.closePreview();
+}
+
+async function handleImport() {
+  const rows = draftRows.value.filter((r) => selectedKeys.value.includes(r.key));
+  if (!rows.length) {
+    ElMessage.warning('请至少勾选一条要转入的日程');
     return;
   }
   importing.value = true;
   try {
-    for (const s of props.draftSchedules) {
-      await api.create({
-        title: s.title,
-        description: s.description,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        isAllDay: s.isAllDay,
-        priority: s.priority,
-        tags: s.tags,
-        color: s.color,
-        location: s.location,
-        contact: s.contact,
-      });
-    }
-    ElMessage.success(`已导入 ${props.draftSchedules.length} 条日程`);
-    emit('imported');
-    emit('close');
-  } catch {
-    // 错误提示已在 useAppApi 统一弹出
+    const ok = await store.importDrafts(rows.map((r) => r.item as ScheduleItem));
+    if (ok > 0) ElMessage.success(`已导入 ${ok} 条日程到日程表`);
+    else ElMessage.error('导入失败，请稍后重试');
+    close();
   } finally {
     importing.value = false;
   }
@@ -120,141 +133,323 @@ async function importAll() {
 <template>
   <el-dialog
     :model-value="visible"
-    title="划重点预览"
-    width="80%"
-    :close-on-click-modal="false"
-    @update:model-value="v => !v && !importing && emit('close')"
+    :title="payload?.title || '预览'"
+    width="760px"
+    top="7vh"
+    class="highlight-dialog"
+    @update:model-value="onDialogVisible"
   >
-    <div class="hp">
-      <div class="hp-left">
-        <div class="hp-block-title">原文</div>
-        <p v-if="fullText" class="hp-text">
+    <div v-if="payload" class="preview-body">
+      <!-- ========== 划重点模式：原文高亮 ========== -->
+      <template v-if="isHighlight">
+        <div class="block-title">
+          <span>原文片段</span>
+          <div v-if="legendTypes.length" class="legend">
+            <span v-for="t in legendTypes" :key="t" class="legend-item">
+              <i class="legend-dot" :style="{ background: highlightColor(t) }" />
+              {{ highlightLabel(t) }}
+            </span>
+          </div>
+        </div>
+        <div class="origin-text">
           <span
-            v-for="(seg, i) in segments"
+            v-for="(part, i) in parts"
             :key="i"
-            :class="{ hl: seg.type }"
-            :style="seg.type ? { background: TYPE_COLOR[seg.type] } : {}"
-          >{{ seg.text }}</span>
-        </p>
-        <p v-else class="hp-empty-text">暂无原文内容</p>
+            :style="partStyle(part)"
+            :title="partTitle(part)"
+            :class="{ 'hl-part': !!part.type }"
+          >{{ part.text }}</span>
+        </div>
+
+        <div class="block-title">
+          <span>识别到的重点（{{ segments.length }}）</span>
+        </div>
+        <ul class="segment-list">
+          <li v-for="(seg, i) in segments" :key="i" class="segment-item">
+            <span class="seg-type" :style="{ color: highlightColor(seg.type), borderColor: highlightColor(seg.type) }">
+              {{ highlightLabel(seg.type) }}
+            </span>
+            <div class="seg-body">
+              <p class="seg-text">{{ seg.text }}</p>
+              <div class="seg-meta">
+                <div class="confidence">
+                  <div class="confidence-bar">
+                    <i :style="{ width: `${confidencePct(seg.confidence)}%`, background: highlightColor(seg.type) }" />
+                  </div>
+                  <span class="confidence-num">{{ confidencePct(seg.confidence) }}%</span>
+                </div>
+                <span v-if="seg.suggestion" class="seg-suggestion">{{ seg.suggestion }}</span>
+              </div>
+            </div>
+          </li>
+          <li v-if="!segments.length" class="empty-line">未识别到可高亮的重点片段</li>
+        </ul>
+      </template>
+
+      <!-- ========== 生成模式：说明 + 冲突 + 表格 ========== -->
+      <template v-else>
+        <el-alert
+          v-if="payload.explanation"
+          :title="payload.explanation"
+          type="info"
+          :closable="false"
+          show-icon
+          class="gen-alert"
+        />
+        <el-alert
+          v-for="(conflict, i) in payload.conflicts"
+          :key="`c-${i}`"
+          :title="conflict"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="gen-alert"
+        />
+        <div class="block-title"><span>日程草稿（{{ draftRows.length }}）</span></div>
+      </template>
+
+      <!-- ========== 草稿清单（两种模式共用） ========== -->
+      <div class="draft-head">
+        <span class="draft-count">将转入 {{ draftRows.length }} 条日程</span>
+        <el-checkbox
+          :model-value="allSelected"
+          :indeterminate="selectedKeys.length > 0 && !allSelected"
+          @change="onAllChange"
+        >
+          全选
+        </el-checkbox>
       </div>
 
-      <div class="hp-right">
-        <div class="hp-block-title">识别到的重点（{{ highlights.length }}）</div>
-        <div class="hp-list">
-          <div v-for="(h, i) in highlights" :key="i" class="hp-item">
-            <div class="hp-item-head">
-              <span class="hp-type" :style="{ background: TYPE_COLOR[h.type] }">
-                {{ TYPE_TEXT[h.type] ?? h.type }}
-              </span>
-              <span class="hp-conf">{{ pct(h) }}%</span>
+      <div class="draft-list">
+        <el-empty v-if="!draftRows.length" description="没有可导入的日程草稿" :image-size="64" />
+        <div
+          v-for="row in draftRows"
+          :key="row.key"
+          class="draft-card"
+          :class="{ checked: selectedKeys.includes(row.key) }"
+          @click="onOneChange(row.key, !selectedKeys.includes(row.key))"
+        >
+          <el-checkbox
+            :model-value="selectedKeys.includes(row.key)"
+            @click.stop
+            @change="onOneChange(row.key, $event)"
+          />
+          <div class="draft-main">
+            <div class="draft-title">
+              <span class="color-dot" :style="{ background: row.item.color }" />
+              {{ row.item.title }}
+              <el-tag :type="PRIORITY_META[row.item.priority].tag" size="small" effect="light" round>
+                {{ PRIORITY_META[row.item.priority].label }}
+              </el-tag>
             </div>
-            <span class="hp-item-text">{{ h.text }}</span>
-            <el-progress
-              :percentage="pct(h)"
-              :stroke-width="4"
-              :show-text="false"
-              :color="h.confidence >= 0.7 ? '#0d9488' : '#f59e0b'"
-            />
-            <span v-if="h.suggestion" class="hp-sugg">💡 {{ h.suggestion }}</span>
+            <div class="draft-meta">{{ formatScheduleRange(row.item) }}</div>
+            <div v-if="row.item.location || row.item.contact" class="draft-meta">
+              <span v-if="row.item.location">📍 {{ row.item.location }}</span>
+              <span v-if="row.item.contact"> 👤 {{ row.item.contact }}</span>
+            </div>
           </div>
-          <div v-if="!highlights.length" class="hp-empty">没有识别到重点，换个文本试试</div>
         </div>
       </div>
     </div>
 
     <template #footer>
-      <el-button :disabled="importing" @click="emit('close')">取消</el-button>
-      <el-button type="primary" :loading="importing" @click="importAll">
-        全部导入日程表（{{ draftSchedules.length }}）
+      <el-button @click="close">取消</el-button>
+      <el-button type="primary" :loading="importing" :disabled="!draftRows.length" @click="handleImport">
+        转入日程表
       </el-button>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
-.hp {
-  display: flex;
-  gap: 18px;
-  min-height: 320px;
-}
-.hp-left {
-  flex: 6; /* 60% */
-  min-width: 0;
-}
-.hp-right {
-  flex: 4; /* 40% */
-  min-width: 0;
-  border-left: 1px solid var(--cf-line);
-  padding-left: 18px;
-}
-.hp-block-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--cf-text-2);
-  margin-bottom: 10px;
-}
-.hp-text {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.9;
-  color: var(--cf-text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.hp-text span {
-  border-radius: 3px;
-  padding: 1px 1px;
-}
-.hp-empty-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--cf-text-3);
-}
-.hp-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-height: 400px;
+.preview-body {
+  max-height: 62vh;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
 }
-.hp-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 11px 12px;
-  border: 1px solid #eef1f5;
-  border-radius: 10px;
-}
-.hp-item-head {
+
+.block-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-.hp-type {
-  font-size: 11px;
-  padding: 1px 9px;
-  border-radius: 6px;
-}
-.hp-conf {
-  font-size: 12px;
-  color: var(--cf-text-3);
-  font-variant-numeric: tabular-nums;
-}
-.hp-item-text {
   font-size: 13px;
-  color: var(--cf-text);
-  line-height: 1.5;
+  font-weight: 600;
+  color: #2b3646;
+  margin: 4px 0 8px;
 }
-.hp-sugg {
-  font-size: 12px;
-  color: var(--cf-accent);
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
-.hp-empty {
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #8c98a8;
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.origin-text {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7f9fd;
+  border: 1px solid #e8eef8;
+  font-size: 13px;
+  line-height: 2;
+  color: #4a5768;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.hl-part {
+  border-radius: 3px;
+  padding: 1px 2px;
+  cursor: help;
+}
+
+.segment-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.segment-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #eef1f7;
+  border-radius: 10px;
+  background: #fff;
+}
+.seg-type {
+  flex-shrink: 0;
+  height: 20px;
+  line-height: 18px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: #fff;
+}
+.seg-body {
+  min-width: 0;
+  flex: 1;
+}
+.seg-text {
+  margin: 0;
   font-size: 12px;
-  color: var(--cf-text-3);
-  padding: 20px 0;
+  color: #4a5768;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.seg-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+.confidence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.confidence-bar {
+  width: 90px;
+  height: 5px;
+  border-radius: 3px;
+  background: #eef1f7;
+  overflow: hidden;
+}
+.confidence-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.confidence-num {
+  font-size: 11px;
+  color: #8c98a8;
+}
+.seg-suggestion {
+  font-size: 11px;
+  color: #4f8cff;
+}
+.empty-line {
+  font-size: 12px;
+  color: #a6b1c2;
   text-align: center;
+  padding: 8px 0;
+}
+
+.gen-alert {
+  margin-bottom: 8px;
+}
+
+.draft-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 2px 6px;
+  margin-top: 4px;
+  border-top: 1px dashed #eef2f8;
+}
+.draft-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b3646;
+}
+
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.draft-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #eef1f7;
+  border-radius: 10px;
+  background: #fafbfe;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.draft-card.checked {
+  border-color: #bcd4ff;
+  background: #f2f7ff;
+}
+.draft-main {
+  min-width: 0;
+  flex: 1;
+}
+.draft-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b3646;
+  word-break: break-all;
+}
+.color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.draft-meta {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #8c98a8;
 }
 </style>
