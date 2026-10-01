@@ -1,0 +1,67 @@
+/* ============================================================
+ * ChronoFlow 全局样式 —— 设计基座
+ * 理念：留白 + 细线 + 单一主色，安静但有秩序
+ * ============================================================ */
+
+:root {
+  --cf-bg: #f5f6f8;          /* 应用底色 */
+  --cf-panel: #ffffff;       /* 面板 */
+  --cf-line: #e7eaf0;        /* 分隔线 */
+  --cf-text: #1f2430;        /* 主文字 */
+  --cf-text-2: #66708a;      /* 次级文字 */
+  --cf-text-3: #9aa3b8;      /* 弱文字 */
+  --cf-accent: #4c6bf5;      /* 主色： Chrono 蓝 */
+  --cf-accent-soft: #eef1fe; /* 主色弱背景 */
+  --cf-danger: #f54a45;
+  --cf-radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--cf-text);
+  background: var(--cf-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- 细滚动条：安静不抢眼 ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #dbe0e8;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c8cfda;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- Element Plus 微调：统一圆角与克制感 ---- */
+.el-button {
+  border-radius: 8px;
+}
+.el-dialog {
+  border-radius: var(--cf-radius);
+}
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: 8px;
+}
+.el-select__wrapper {
+  border-radius: 8px;
+}

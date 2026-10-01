@@ -40,8 +40,8 @@
 ```bash
 npm install
 
-# 桌面端（Electron）
-MOCK_MODE=true npm run dev
+# 桌面端（Electron）—— 默认 Mock 模式，直接跑即可看到演示数据
+npm run dev
 
 # 移动端（浏览器预览，需先装 Capacitor）
 npm run dev:mobile
@@ -63,4 +63,4 @@ npm run cap:sync          # 同步构建产物到原生工程
 
 | 变量 | 说明 |
 |---|---|
-| `MOCK_MODE` | `true` 时全链路假数据，无需任何 Key（演示/开发默认） |
+| `MOCK_MODE` | **默认开启**（不设置即为 Mock）。显式设为 `false` 时走真实逻辑，需自备 AI/搜索 Key |

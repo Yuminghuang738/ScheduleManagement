@@ -7,6 +7,7 @@
  * 渲染层组件不需要关心当前在哪个平台，只管调 useAppApi()。
  */
 
+import { ElMessage } from 'element-plus';
 import type {
   GenScheduleTableReq, GenScheduleTableRes,
   ExtractHighlightsReq, ExtractHighlightsRes,
@@ -23,11 +24,21 @@ declare global {
   }
 }
 
+function fail(msg: string): never {
+  ElMessage.error(msg);
+  throw new Error(msg);
+}
+
 async function call<T>(action: () => Promise<{ success: boolean; data?: T; error?: { message: string } }>): Promise<T> {
-  const res = await action();
+  let res;
+  try {
+    res = await action();
+  } catch (e) {
+    // IPC 通道本身抛错（如真实模式下 Not implemented）
+    fail(e instanceof Error ? e.message : '操作失败');
+  }
   if (!res.success) {
-    alert(res.error?.message || '操作失败');
-    throw new Error(res.error?.message || '操作失败');
+    fail(res.error?.message || '操作失败');
   }
   return res.data as T;
 }

@@ -7,7 +7,7 @@
  *   2. 注册全部 IPC handler（schedule:* + search:* 内部）
  */
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import { join } from 'path';
 import { IPC } from '../shared/ipc';
 import {
@@ -30,7 +30,10 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 960,
+    minHeight: 640,
     title: 'ChronoFlow',
+    autoHideMenuBar: true, // 界面内已有品牌顶栏，隐藏默认菜单（Alt 可临时唤出）
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -69,6 +72,7 @@ function registerIpcHandlers(): void {
 // ==================== 应用生命周期 ====================
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null); // 移除默认菜单栏（File/Edit/View...），界面更干净
   registerIpcHandlers();
   createWindow();
 
