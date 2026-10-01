@@ -1,0 +1,24 @@
+// ============================================================
+// 渲染进程可见的 API 契约（仅类型） —— 冻结契约，禁止修改
+// ============================================================
+
+import type {
+  GenScheduleTableReq, GenScheduleTableRes,
+  ExtractHighlightsReq, ExtractHighlightsRes,
+  SaveInfoReq, ClassifiedItem,
+  QueryClassifiedReq, ClassifiedQueryRes,
+  ScheduleInput, ScheduleItem,
+  ScheduleQueryReq, ScheduleQueryRes,
+  Result,
+} from './types';
+
+export interface ScheduleApi {
+  genTableFromText(req: GenScheduleTableReq): Promise<Result<GenScheduleTableRes>>;
+  extractHighlights(req: ExtractHighlightsReq): Promise<Result<ExtractHighlightsRes>>;
+  saveClassifiedInfo(req: SaveInfoReq): Promise<Result<ClassifiedItem>>;
+  queryClassifiedItems(req: QueryClassifiedReq): Promise<Result<ClassifiedQueryRes>>;
+  create(input: ScheduleInput): Promise<Result<ScheduleItem>>;
+  update(item: ScheduleItem): Promise<Result<ScheduleItem>>;
+  delete(id: string): Promise<Result<boolean>>;
+  query(req: ScheduleQueryReq): Promise<Result<ScheduleQueryRes>>;
+}

@@ -1,0 +1,297 @@
+/**
+ * ChronoFlow 统一 Mock 数据源
+ *
+ * 这里提供 MOCK_MODE=true 时所有函数返回的样例数据。
+ * 各模块的业务代码（schedule.ts / search-agent.ts）只负责读，你在这填假数据。
+ */
+
+export const NOT_IMPLEMENTED = new Error('Not implemented');
+
+// ---- 类型 ----
+import type {
+  ScheduleItem, GenScheduleTableReq, GenScheduleTableRes,
+  ExtractHighlightsReq, ExtractHighlightsRes, HighlightSegment,
+  SaveInfoReq, ClassifiedItem,
+  QueryClassifiedReq, ClassifiedQueryRes,
+  ScheduleInput, ScheduleQueryReq, ScheduleQueryRes,
+  SearchRequest, SearchResultItem, SearchSummaryRes,
+  SearchSource,
+} from '../shared/types';
+
+// ========== 内置工具 ==========
+
+let nextId = () => `sched_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+// 内置样板日程（mock-data 基线）
+const mockSchedules: ScheduleItem[] = [
+  {
+    id: 'sched_001',
+    title: '周会：Q4 产品路线图评审',
+    description: '评审 Q4 产品路线图，重点讨论 AI 搜索模块的上线节奏',
+    startTime: '2026-10-03T10:00:00+08:00',
+    endTime: '2026-10-03T11:30:00+08:00',
+    isAllDay: false,
+    priority: 'high',
+    tags: ['产品', '评审'],
+    color: '#e74c3c',
+    isCompleted: false,
+    location: '3F 会议室 A',
+    contact: '王经理',
+    sourceText: '下周五上午 10:00-11:30 在 3F 会议室 A 评审 Q4 产品路线图',
+    createdAt: '2026-09-28T09:00:00+08:00',
+    updatedAt: '2026-09-28T09:00:00+08:00',
+  },
+  {
+    id: 'sched_002',
+    title: '提交 Q3 述职报告',
+    description: '完成个人 Q3 述职报告并提交 HR 系统',
+    startTime: '2026-10-08T18:00:00+08:00',
+    endTime: '2026-10-08T18:00:00+08:00',
+    isAllDay: false,
+    priority: 'urgent',
+    tags: ['HR', 'deadline'],
+    color: '#e74c3c',
+    isCompleted: false,
+    location: '',
+    contact: '',
+    sourceText: '10 月 8 号前务必把 Q3 述职交了',
+    createdAt: '2026-09-25T14:00:00+08:00',
+    updatedAt: '2026-09-25T14:00:00+08:00',
+  },
+  {
+    id: 'sched_003',
+    title: '技术分享：Electron 安全架构',
+    description: '分享 contextBridge 安全实践 + preload 白名单策略',
+    startTime: '2026-10-05T14:00:00+08:00',
+    endTime: '2026-10-05T15:30:00+08:00',
+    isAllDay: false,
+    priority: 'medium',
+    tags: ['技术', '分享'],
+    color: '#3498db',
+    isCompleted: false,
+    location: '线上腾讯会议',
+    contact: '李工',
+    sourceText: '周三下午 2 点线上分享 Electron 安全，李工主讲',
+    createdAt: '2026-09-30T10:00:00+08:00',
+    updatedAt: '2026-09-30T10:00:00+08:00',
+  },
+  {
+    id: 'sched_004',
+    title: '国庆假期',
+    description: '国庆节放假',
+    startTime: '2026-10-01T00:00:00+08:00',
+    endTime: '2026-10-07T23:59:00+08:00',
+    isAllDay: true,
+    priority: 'low',
+    tags: ['假期'],
+    color: '#2ecc71',
+    isCompleted: false,
+    location: '',
+    contact: '',
+    sourceText: '',
+    createdAt: '2026-09-20T08:00:00+08:00',
+    updatedAt: '2026-09-20T08:00:00+08:00',
+  },
+  {
+    id: 'sched_005',
+    title: '采购团队聚餐食材',
+    description: '去超市采购下周团队聚餐用的食材和饮料',
+    startTime: '2026-10-09T09:00:00+08:00',
+    endTime: '2026-10-09T11:00:00+08:00',
+    isAllDay: false,
+    priority: 'low',
+    tags: ['生活', '采购'],
+    color: '#f39c12',
+    isCompleted: false,
+    location: '盒马鲜生',
+    contact: '小张',
+    sourceText: '下周三上午去盒马采购聚餐材料，叫上小张一起去',
+    createdAt: '2026-10-01T10:00:00+08:00',
+    updatedAt: '2026-10-01T10:00:00+08:00',
+  },
+];
+
+const mockClassifiedItems: ClassifiedItem[] = [
+  {
+    type: 'contact',
+    title: '王经理',
+    content: '王经理，电话 138xxxx，负责产品部',
+    tags: ['联系人', '产品部'],
+    sourceText: '王经理电话 138xxxx，产品部负责人',
+    createdAt: '2026-09-20T10:00:00+08:00',
+  },
+  {
+    type: 'reference',
+    title: 'Q4 产品路线图草案',
+    content: 'AI 搜索模块预计 11 月上线，Q4 重点攻坚智能日程生成算法',
+    tags: ['产品', '路线图'],
+    sourceText: 'AI 搜索模块预计 11 月上线',
+    createdAt: '2026-09-22T10:00:00+08:00',
+  },
+  {
+    type: 'note',
+    title: '团队聚餐想法',
+    content: '下下周可以考虑团队吃火锅，统计一下忌口',
+    tags: ['聚餐', '团建'],
+    sourceText: '下下周团队吃火锅',
+    createdAt: '2026-09-28T10:00:00+08:00',
+  },
+];
+
+let localSchedules = [...mockSchedules];
+let localClassified = [...mockClassifiedItems];
+
+// ==============================
+// schedule.ts 用到的 mock 函数
+// ==============================
+
+export const mockScheduleData = {
+  genTableFromText(_req: GenScheduleTableReq): GenScheduleTableRes {
+    return {
+      scheduleItems: localSchedules,
+      explanation: `从原文中识别到 ${localSchedules.length} 项日程。已自动参考节假日信息（搜索 Agent 返回 2 条参考），确保无冲突。`,
+      conflicts: [],
+      table: localSchedules.map(s => ({
+        time: s.startTime.slice(0, 16).replace('T', ' '),
+        title: s.title,
+        detail: s.description.slice(0, 30),
+      })),
+    };
+  },
+
+  extractHighlights(_req: ExtractHighlightsReq): ExtractHighlightsRes {
+    const highlights: HighlightSegment[] = localSchedules
+      .filter(s => s.sourceText)
+      .map((s, i) => ({
+        type: s.priority === 'urgent' ? 'deadline' as const : 'task' as const,
+        text: s.sourceText,
+        startOffset: i * 10,
+        endOffset: i * 10 + s.sourceText.length,
+        confidence: 0.75 + i * 0.05,
+        suggestion: `建议创建日程「${s.title}」`,
+      }));
+
+    return {
+      highlights,
+      draftSchedules: localSchedules.map(s => ({ ...s, id: `draft_${s.id}` })),
+      fullText: '下周五上午 10:00-11:30 在 3F 会议室 A 评审 Q4 产品路线图；10 月 8 号前务必把 Q3 述职交了...',
+    };
+  },
+
+  saveClassifiedInfo(req: SaveInfoReq): ClassifiedItem {
+    const item: ClassifiedItem = {
+      type: req.hintType as ClassifiedItem['type'] || 'note',
+      title: req.content.slice(0, 20),
+      content: req.content,
+      tags: [],
+      sourceText: req.content,
+      createdAt: new Date().toISOString(),
+    };
+    localClassified.push(item);
+    return item;
+  },
+
+  queryClassifiedItems(req: QueryClassifiedReq): ClassifiedQueryRes {
+    let items = localClassified;
+    if (req.keyword) {
+      items = items.filter(i => i.content.includes(req.keyword!) || i.title.includes(req.keyword!));
+    }
+    if (req.type) {
+      items = items.filter(i => i.type === req.type);
+    }
+    return {
+      items,
+      pageInfo: { page: req.page || 1, pageSize: req.pageSize || 20, total: items.length },
+    };
+  },
+
+  create(input: ScheduleInput): ScheduleItem {
+    const item: ScheduleItem = {
+      id: nextId(),
+      title: input.title,
+      description: input.description,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      isAllDay: input.isAllDay ?? false,
+      priority: input.priority ?? 'medium',
+      tags: input.tags ?? [],
+      color: input.color ?? '#4f8cff',
+      isCompleted: false,
+      location: input.location ?? '',
+      contact: input.contact ?? '',
+      sourceText: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    localSchedules.unshift(item);
+    return item;
+  },
+
+  update(item: ScheduleItem): ScheduleItem {
+    const idx = localSchedules.findIndex(s => s.id === item.id);
+    if (idx === -1) throw new Error('E_SCHEDULE_NOT_FOUND');
+    localSchedules[idx] = { ...item, updatedAt: new Date().toISOString() };
+    return localSchedules[idx];
+  },
+
+  delete(id: string): boolean {
+    const idx = localSchedules.findIndex(s => s.id === id);
+    if (idx === -1) return false;
+    localSchedules.splice(idx, 1);
+    return true;
+  },
+
+  query(_req: ScheduleQueryReq): ScheduleQueryRes {
+    return {
+      items: localSchedules,
+      pageInfo: { page: 1, pageSize: 20, total: localSchedules.length },
+    };
+  },
+};
+
+// ==============================
+// search-agent.ts 用到的 mock 函数
+// ==============================
+
+export const mockSearchData = {
+  multiPlatformQuery(_req: SearchRequest): SearchResultItem[] {
+    return [
+      {
+        id: 'search_001',
+        title: '2026 年国庆节放假安排',
+        url: 'https://www.gov.cn/guoqing2026',
+        snippet: '2026 年国庆节放假时间为 10 月 1 日至 10 月 7 日，共 7 天。',
+        source: 'web' as SearchSource,
+        publishedAt: '2026-09-15T00:00:00+08:00',
+      },
+      {
+        id: 'search_002',
+        title: '3F 会议室 A 开放时间与预定规则',
+        url: 'https://oa.company.com/rooms',
+        snippet: '会议室 A 可容纳 12 人，开放时间 8:00-20:00，需提前 1 天预定。',
+        source: 'web' as SearchSource,
+        publishedAt: '2026-08-01T00:00:00+08:00',
+      },
+      {
+        id: 'search_003',
+        title: 'Q4 产品路线图最新进展',
+        url: 'https://wiki.company.com/q4-roadmap',
+        snippet: 'AI 搜索模块预计 11 月中旬上线，Q4 重点攻坚智能日程生成算法。',
+        source: 'web' as SearchSource,
+        publishedAt: '2026-09-28T00:00:00+08:00',
+      },
+    ];
+  },
+
+  getSummary(_req: SearchRequest): SearchSummaryRes {
+    return {
+      summary: '根据搜索结果，国庆节 10.1~10.7 放假，3F 会议室 A 需提前 1 天预定。Q4 产品路线图显示 AI 搜索模块预计 11 月上线。建议日程避开节假日和会议室不可用时段。',
+      keyPoints: [
+        '国庆假期：10 月 1-7 日',
+        '3F 会议室 A：8:00-20:00，需提前预定',
+        'AI 搜索模块：11 月中旬上线',
+      ],
+      references: this.multiPlatformQuery(_req),
+    };
+  },
+};

@@ -1,0 +1,15 @@
+{
+  "extends": ["./tsconfig.json"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "./out"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.vue"
+  ]
+}
