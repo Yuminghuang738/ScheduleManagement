@@ -11,3 +11,7 @@ Thumbs.db
 
 # 本地工作区数据（项目记忆、自检与截图产物），不随仓库分发
 .workbuddy/
+
+# electron-builder 的应用图标：由 .github/scripts/generate-icons.mjs 在打包前生成的占位图。
+# 想把自己做的正式图标入库，用 git add -f resources/icon.ico resources/icon.png 强制添加。
+resources/
