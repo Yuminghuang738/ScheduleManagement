@@ -2,6 +2,26 @@ appId: com.chronoflow.app
 productName: ChronoFlow
 directories:
   output: dist
+
+# ==================== 打包白名单 ====================
+# 只打包 Electron 运行必需的内容：
+#   - out/main      主进程产物（仅依赖 electron 与 Node 内置模块）
+#   - out/preload   preload 产物
+#   - out/renderer  渲染层产物（已被 Vite 打成 bundle，故不需要 node_modules）
+#   - package.json  Electron 靠它定位 main 入口
+#
+# ⚠️ electron-builder **不读 .gitignore**。不写 files 时它会把整个项目根目录塞进 app.asar，
+#    实测曾打包进 .env / .workbuddy / src / docs / dist-mobile / 各类配置，
+#    asar 膨胀到 107MB、10894 个条目 —— 其中 .env 一旦写入 API Key 就会随安装包分发出去。
+files:
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+  - package.json
+  # 主进程产物只 require electron 与 node: 内置模块；渲染层已被 Vite 打成 bundle。
+  # 因此 node_modules 一个都不需要（实测不排除会多出 9196 个条目、约 60MB）。
+  - '!node_modules/**/*'
+
 win:
   target: nsis
   icon: resources/icon.ico
